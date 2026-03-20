@@ -1,24 +1,24 @@
 # telegram-klavdiy-bot
 
-Claude Code як Telegram-бот через PM2 + expect. Працює як always-on сервіс.
+Claude Code as an always-on Telegram bot via PM2 + expect.
 
-## Передумови
+## Prerequisites
 
 - macOS / Linux
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) (`npm i -g @anthropic-ai/claude-code`)
 - [Bun](https://bun.sh) (`curl -fsSL https://bun.sh/install | bash`)
 - [PM2](https://pm2.keymetrics.io) (`npm i -g pm2`)
-- `expect` (macOS — вже є, Linux — `apt install expect`)
+- `expect` (built-in on macOS, `apt install expect` on Linux)
 
-## Налаштування
+## Setup
 
-### 1. Створи бота
+### 1. Create a bot
 
-Відкрий [@BotFather](https://t.me/BotFather) → `/newbot` → задай ім'я та username (має закінчуватись на `bot`). Скопіюй токен.
+Open [@BotFather](https://t.me/BotFather) → `/newbot` → set a name and username (must end with `bot`). Copy the token.
 
-### 2. Встанови плагін
+### 2. Install the plugin
 
-Запусти `claude` і виконай:
+Start `claude` and run:
 
 ```
 /plugin install telegram@claude-plugins-official
@@ -26,52 +26,52 @@ Claude Code як Telegram-бот через PM2 + expect. Працює як alwa
 /telegram:configure <TOKEN>
 ```
 
-Токен зберігається в `~/.claude/channels/telegram/.env`.
+Token is saved to `~/.claude/channels/telegram/.env`.
 
-### 3. Спарюй бота
+### 3. Pair the bot
 
-Запусти Claude з каналом:
+Launch Claude with the channel:
 
 ```sh
 claude --channels plugin:telegram@claude-plugins-official
 ```
 
-Напиши боту в Telegram — отримаєш код. В сесії Claude:
+DM your bot on Telegram — you'll get a pairing code. In the Claude session:
 
 ```
-/telegram:access pair <код>
+/telegram:access pair <code>
 /telegram:access policy allowlist
 ```
 
-### 4. Розгорни як сервіс
+### 4. Deploy as a service
 
-Клонуй репо та відредагуй шляхи в `start.sh` і `ecosystem.config.cjs` під свою систему.
+Clone the repo and edit paths in `start.sh` and `ecosystem.config.cjs` to match your system.
 
 ```sh
 git clone https://github.com/dioteos/telegram-klavdiy-bot.git
 cd telegram-klavdiy-bot
 
-# Відредагуй шляхи
+# Edit paths
 vim start.sh
 vim ecosystem.config.cjs
 
-# Запусти
+# Start
 pm2 start ecosystem.config.cjs
 pm2 save
-pm2 startup  # автостарт після ребуту
+pm2 startup  # auto-start after reboot
 ```
 
-## Як це працює
+## How it works
 
-- `start.sh` — запускає `claude` через `expect`, який алокує PTY (Claude Code потребує TTY)
-- `ecosystem.config.cjs` — PM2 конфіг з автоперезапуском (макс 10 рестартів, затримка 30с)
-- PM2 тримає процес живим, `expect` забезпечує TTY-емуляцію
+- `start.sh` — runs `claude` via `expect`, which allocates a PTY (Claude Code requires a TTY)
+- `ecosystem.config.cjs` — PM2 config with auto-restart (max 10 restarts, 30s delay)
+- PM2 keeps the process alive, `expect` provides TTY emulation
 
-## Управління
+## Management
 
 ```sh
-pm2 status              # статус
-pm2 logs telegram-klavdiy  # логи
+pm2 status                    # check status
+pm2 logs telegram-klavdiy     # view logs
 pm2 restart telegram-klavdiy
 pm2 stop telegram-klavdiy
 ```
