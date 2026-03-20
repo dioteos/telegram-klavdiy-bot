@@ -45,17 +45,11 @@ DM your bot on Telegram — you'll get a pairing code. In the Claude session:
 
 ### 4. Deploy as a service
 
-Clone the repo and edit paths in `start.sh` and `ecosystem.config.cjs` to match your system.
+Clone the repo and start with PM2 — no path editing needed, everything resolves automatically.
 
 ```sh
 git clone https://github.com/dioteos/telegram-klavdiy-bot.git
 cd telegram-klavdiy-bot
-
-# Edit paths
-vim start.sh
-vim ecosystem.config.cjs
-
-# Start
 pm2 start ecosystem.config.cjs
 pm2 save
 pm2 startup  # auto-start after reboot
@@ -63,9 +57,8 @@ pm2 startup  # auto-start after reboot
 
 ## How it works
 
-- `start.sh` — runs `claude` via `expect`, which allocates a PTY (Claude Code requires a TTY)
-- `ecosystem.config.cjs` — PM2 config with auto-restart (max 10 restarts, 30s delay)
-- PM2 keeps the process alive, `expect` provides TTY emulation
+- `start.sh` — runs `claude` via `expect`, which allocates a PTY (Claude Code requires a TTY). Resolves `$HOME` and `$PATH` dynamically — no hardcoded paths.
+- `ecosystem.config.cjs` — PM2 config with auto-restart (max 10 restarts, 30s delay). Uses `os.homedir()` and `__dirname` for portability.
 
 ## Management
 
