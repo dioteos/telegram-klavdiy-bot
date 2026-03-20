@@ -1,15 +1,19 @@
+const os = require('os');
+const path = require('path');
+
+const home = os.homedir();
+
 module.exports = {
   apps: [{
     name: 'telegram-klavdiy',
-    script: '/Users/dioteos/www/telegram-bot/start.sh',
+    script: path.join(__dirname, 'start.sh'),
     interpreter: '/bin/bash',
-    cwd: '/Users/dioteos',
+    cwd: home,
     autorestart: true,
     max_restarts: 10,
     restart_delay: 30000,
     env: {
-      PATH: '/Users/dioteos/.local/bin:/Users/dioteos/.bun/bin:/Users/dioteos/.nvm/versions/node/v22.22.0/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin',
-      HOME: '/Users/dioteos',
+      HOME: home,
     },
   }],
 };
