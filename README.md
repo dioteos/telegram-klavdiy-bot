@@ -60,6 +60,12 @@ pm2 startup  # auto-start after reboot
 - `start.sh` — runs `claude` via `expect`, which allocates a PTY (Claude Code requires a TTY). Resolves `$HOME` and `$PATH` dynamically — no hardcoded paths.
 - `ecosystem.config.cjs` — PM2 config with auto-restart (max 10 restarts, 30s delay). Uses `os.homedir()` and `__dirname` for portability.
 
+## Security note
+
+The bot runs with `--dangerously-skip-permissions`, which means Claude Code executes all tool calls (shell commands, file writes, etc.) without asking for confirmation. This is required for unattended operation — there's no human at the terminal to approve prompts.
+
+**Only run this on a machine you trust**, behind proper access controls. Make sure to set `/telegram:access policy allowlist` so only approved Telegram users can interact with the bot.
+
 ## Management
 
 ```sh
