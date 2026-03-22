@@ -1,0 +1,9 @@
+.DS_Store
+config.json
+node_modules/
+.claude/
+memory/*.md
+!memory/INSTRUCTIONS.md
+logs/*.md
+!logs/INSTRUCTIONS.md
+restart_note.md

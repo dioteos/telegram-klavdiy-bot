@@ -11,11 +11,17 @@ for dir in "$HOME/.local/bin" "$HOME/.bun/bin" "$HOME/.nvm/versions/node/"*/bin 
 done
 export PATH
 
-cd "$HOME"
+cd "$(dirname "$0")"
 
 # expect allocates its own PTY — Claude Code requires a TTY
+# Timeout = 23 hours — safety net for hung sessions.
+# PM2 cron_restart at 4 AM gives a fresh session daily;
+# this catches sessions that hang and never exit on their own.
 exec expect -c '
-set timeout -1
-spawn claude --channels plugin:telegram@claude-plugins-official --dangerously-skip-permissions
-expect eof
+set timeout 82800
+spawn claude --channels plugin:telegram@claude-plugins-official --dangerously-skip-permissions "Execute Telegram Bot Startup from CLAUDE.md."
+expect {
+    timeout { puts "Session timed out after 23h — exiting for PM2 restart"; exit 1 }
+    eof
+}
 '
