@@ -4,12 +4,13 @@ Always-on Claude Code bot for Telegram. Powered by PM2 + Claude Channels.
 
 ## Startup
 
-When Telegram plugin tools are available, execute this startup procedure in strict order:
+When Telegram plugin tools are available, execute this startup procedure in strict order.
+If the Telegram plugin is not loaded — skip startup, log the reason, and wait for user input.
 
 ### 1. Config
 
 Read `./config.json` → get `admin_chat_id`.
-If missing → read `config.example.json` for schema, ask user via Telegram or AskUserQuestion.
+If missing or unparseable → read `config.example.json` for schema, ask user via Telegram or AskUserQuestion.
 If `admin_chat_id` is empty → stop startup, notify user that config.json needs a valid chat ID.
 
 ### 2. Memory

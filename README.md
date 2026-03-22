@@ -1,116 +1,74 @@
 # telegram-klavdiy-bot
 
-Always-on Claude Code Telegram bot via PM2 + expect.
+Always-on Claude Code Telegram bot. PM2 keeps it running, `CLAUDE.md` is the brain.
 
-> **Warning:** This bot runs with `--dangerously-skip-permissions` — Claude Code executes all tool calls without asking for confirmation. Only run on a trusted machine and restrict access via `/telegram:access policy allowlist`.
+> **Warning:** Runs with `--dangerously-skip-permissions`. Only run on a trusted machine with `/telegram:access policy allowlist`.
 
 ## How it works
 
 ```
-start.sh → expect (PTY) → claude --channels telegram → reads CLAUDE.md → registers tasks → listens
+start.sh → expect (PTY) → claude --channels telegram → CLAUDE.md → registers tasks → listens
 ```
 
-- `CLAUDE.md` — bot brain: reads `config.json`, registers tasks from `tasks/`, handles Telegram messages
-- `tasks/*.md` — scheduled tasks as markdown files with cron in YAML frontmatter
-- `config.json` — your admin chat ID (created during setup, git-ignored)
-- `start.sh` — launches Claude via `expect` (allocates a PTY, required by Claude Code)
-- `ecosystem.config.cjs` — PM2 config with auto-restart and daily fresh session at 4:00 AM
+| File | Role |
+|------|------|
+| `CLAUDE.md` | Bot brain — 6-step startup, ongoing behavior |
+| `tasks/*.md` | Scheduled prompts (cron in YAML frontmatter) |
+| `memory/*.md` | Persistent cross-session knowledge |
+| `config.json` | Admin chat ID (git-ignored) |
+| `ecosystem.config.cjs` | PM2: auto-restart, daily fresh session at 4 AM |
 
 ## Setup
 
-### 1. Prerequisites
-
-- macOS / Linux
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) (`npm i -g @anthropic-ai/claude-code`)
-- [Bun](https://bun.sh) (`curl -fsSL https://bun.sh/install | bash`)
-- [PM2](https://pm2.keymetrics.io) (`npm i -g pm2`)
-- `expect` (built-in on macOS, `apt install expect` on Linux)
-
-### 2. Clone and configure
+**Prerequisites:** macOS/Linux, [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [PM2](https://pm2.keymetrics.io), `expect`
 
 ```sh
 git clone https://github.com/dioteos/telegram-klavdiy-bot.git
 cd telegram-klavdiy-bot
-```
 
-Create a bot via [@BotFather](https://t.me/BotFather) → `/newbot` → copy the token.
-
-Install the plugin and configure the token:
-
-```sh
+# 1. Install Telegram plugin & set token
 claude
 # inside Claude:
-/plugin install telegram@claude-plugins-official
-/reload-plugins
-/telegram:configure <TOKEN>
-```
+#   /plugin install telegram@claude-plugins-official
+#   /reload-plugins
+#   /telegram:configure <TOKEN_FROM_BOTFATHER>
 
-### 3. Set your admin chat ID
-
-```sh
+# 2. Config
 cp config.example.json config.json
-```
+# set your chat ID (get it from @userinfobot on Telegram)
 
-Edit `config.json` — set your Telegram chat ID. To find it, message [@userinfobot](https://t.me/userinfobot).
+# 3. Pair — DM your bot, then:
+#   /telegram:access pair <code>
+#   /telegram:access policy allowlist
 
-### 4. Pair the bot
-
-Launch Claude with the channel:
-
-```sh
-claude --channels plugin:telegram@claude-plugins-official
-```
-
-DM your bot on Telegram — you'll get a pairing code:
-
-```
-/telegram:access pair <code>
-/telegram:access policy allowlist
-```
-
-### 5. Start
-
-```sh
-pm2 install pm2-logrotate    # prevent PM2 logs from growing forever
+# 4. Launch
+pm2 install pm2-logrotate
 pm2 start ecosystem.config.cjs
-pm2 save
-pm2 startup  # auto-start after reboot
+pm2 save && pm2 startup
 ```
-
-Done. Message your bot on Telegram.
 
 ## Tasks
 
-Drop `.md` files in `tasks/` to schedule recurring jobs. Format:
+Drop `.md` files in `tasks/`:
 
-```md
+```yaml
 ---
 schedule: "0 9 * * *"
 enabled: true
 ---
 
-Your prompt here. Claude executes this on schedule.
+Prompt for Claude to execute on schedule.
 ```
 
-- `schedule` — 5-field cron (minute hour day month weekday)
-- `enabled` — `true` to activate, `false` to skip
-- `one_shot` (optional) — `true` to fire once and auto-disable
-- Filename = task name
-- Body = prompt for Claude
+Fields: `schedule` (5-field cron), `enabled` (bool), `one_shot` (optional, fire once).
 
-You can also manage tasks by messaging the bot: "add a task", "list tasks", "disable daily-news".
+Manage via Telegram: "add a task", "list tasks", "disable daily-news".
 
-## Customization
-
-- **Your tasks** → add `.md` files to `tasks/`
-- **Your rules** → create `.claude/rules/*.md` ([docs](https://code.claude.com/docs/en/memory))
-- **Your preferences** → edit `CLAUDE.md` or `~/.claude/CLAUDE.md`
-
-## Management
+## PM2
 
 ```sh
-pm2 status                    # check status
-pm2 logs telegram-klavdiy     # view logs
+pm2 status                    # check
+pm2 logs telegram-klavdiy     # logs
 pm2 restart telegram-klavdiy  # restart
 pm2 stop telegram-klavdiy     # stop
 ```
