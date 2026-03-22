@@ -5,7 +5,7 @@ const home = os.homedir();
 
 module.exports = {
   apps: [{
-    name: 'claude-telegram',
+    name: 'telegram-klavdiy',
     script: path.join(__dirname, 'start.sh'),
     interpreter: '/bin/bash',
     cwd: __dirname,

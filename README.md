@@ -138,7 +138,7 @@ Manage via Telegram: "add a task", "list tasks", "disable daily-news".
 
 ```sh
 pm2 status                   # check status
-pm2 logs claude-telegram     # view logs
-pm2 restart claude-telegram  # restart
-pm2 stop claude-telegram     # stop
+pm2 logs telegram-klavdiy     # view logs
+pm2 restart telegram-klavdiy  # restart
+pm2 stop telegram-klavdiy     # stop
 ```
