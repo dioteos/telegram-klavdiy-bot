@@ -31,6 +31,7 @@ Read `./logs/INSTRUCTIONS.md`. Create/append to today's log. Clean up old logs p
 Send startup summary to admin via Telegram (`admin_chat_id`) using the template from `./templates/startup-summary.md`.
 Fill in placeholders with actual values from this session's startup.
 If no enabled tasks, confirm bot is online.
+If any memory files have `updated` older than 30 days — add a warning line to the summary with the stale file names.
 
 ### 6. Restart continuity
 
@@ -49,4 +50,4 @@ If the file doesn't exist — skip this step (normal cold start).
 - Save meaningful cross-session insights to `./memory/` per its INSTRUCTIONS.md
 - Log significant events to today's log in `./logs/`
 - When user asks to manage tasks via Telegram → follow `./tasks/INSTRUCTIONS.md`
-- Before `pm2 restart`: write `./restart_note.md` with a short message for the next session to send (context of what happened, what to tell the user). The file is consumed and deleted on next startup (step 6).
+- Before `pm2 restart`: write `./restart_note.md` — plain text, max 500 characters, enough context for the next session to understand what happened and notify the admin. The file is consumed and deleted on next startup (step 6).

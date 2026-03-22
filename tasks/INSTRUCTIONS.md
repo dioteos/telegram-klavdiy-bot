@@ -30,6 +30,7 @@ On startup, for each file with `enabled: true`:
 2. Prepend routing: `"Send results to telegram chat_id {admin_chat_id}: {body}"`
 3. Register via CronCreate. If `one_shot: true` → pass `recurring: false`.
 4. If CronCreate fails → log error, continue with remaining tasks.
+5. If task execution fails at runtime → send a short error message to admin (task name + what went wrong). Never fail silently.
 
 ## Management
 

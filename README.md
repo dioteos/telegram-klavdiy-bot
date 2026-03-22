@@ -71,6 +71,7 @@ DM your bot on Telegram — you'll get a pairing code:
 ### 5. Start
 
 ```sh
+pm2 install pm2-logrotate    # prevent PM2 logs from growing forever
 pm2 start ecosystem.config.cjs
 pm2 save
 pm2 startup  # auto-start after reboot
