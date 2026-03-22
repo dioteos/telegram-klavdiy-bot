@@ -19,7 +19,7 @@ cd "$(dirname "$0")"
 # this catches sessions that hang and never exit on their own.
 exec expect -c '
 set timeout 82800
-spawn claude --channels plugin:telegram@claude-plugins-official --dangerously-skip-permissions "Execute Telegram Bot Startup from CLAUDE.md."
+spawn claude --channels plugin:telegram@claude-plugins-official --dangerously-skip-permissions "Execute the Startup procedure defined in CLAUDE.md. Follow all 6 steps in order."
 expect {
     timeout { puts "Session timed out after 23h — exiting for PM2 restart"; exit 1 }
     eof
