@@ -1,6 +1,8 @@
 # telegram-klavdiy-bot
 
-Always-on Claude Code Telegram bot. PM2 keeps it running, `CLAUDE.md` is the brain.
+A personal Telegram bot powered by [Claude Code](https://docs.anthropic.com/en/docs/claude-code). It responds to your messages, runs scheduled tasks (news digests, health checks, plugin updates — anything you describe in plain text), and remembers context across sessions.
+
+There's no application code — `CLAUDE.md` is the entire bot logic. Claude Code reads it on startup and follows the instructions: load config, restore memory, register cron tasks, and start listening. PM2 keeps the process alive and restarts it daily for a fresh session.
 
 > Klavdiy (Клавдій) is the Ukrainian name for Claude.
 
@@ -8,20 +10,31 @@ Always-on Claude Code Telegram bot. PM2 keeps it running, `CLAUDE.md` is the bra
 
 ## How it works
 
-`start.sh` launches Claude Code inside an `expect` PTY wrapper with a 23-hour safety timeout. Claude receives an initial prompt that triggers the 6-step startup procedure defined in `CLAUDE.md`: load config, read memory, register scheduled tasks, create a session log, send a startup summary via Telegram, and process any restart notes. After startup, it listens for Telegram messages and executes cron tasks.
+The [Telegram channel plugin](https://github.com/anthropics/claude-code-plugins) connects Claude Code to Telegram. `start.sh` launches Claude Code inside an `expect` PTY wrapper (Claude Code requires a TTY) with a 23-hour safety timeout. On launch, Claude receives a prompt that triggers the 6-step startup procedure defined in `CLAUDE.md`:
+
+1. **Config** — read `config.json` for the admin chat ID
+2. **Memory** — load persistent knowledge from `memory/*.md` (preferences, feedback, project context carried across sessions)
+3. **Tasks** — register scheduled prompts from `tasks/*.md` via CronCreate
+4. **Logs** — create today's session log, clean up logs older than 7 days
+5. **Summary** — send a startup report to the admin via Telegram
+6. **Restart continuity** — check for a `restart_note.md` left by the previous session and relay it
+
+After startup, the bot listens for Telegram messages and fires cron tasks on schedule.
 
 ```
 start.sh → expect (PTY, 23h timeout)
-  → claude --channels telegram --dangerously-skip-permissions "<startup prompt>"
-    → CLAUDE.md startup → registers tasks → listens
+  → claude --channels plugin:telegram@claude-plugins-official --dangerously-skip-permissions
+    → reads CLAUDE.md → startup procedure → listens for messages + cron
 ```
+
+> **Note:** Cron jobs are session-only — they live in memory and disappear when Claude exits. PM2 restarts the bot daily at 4:00 AM (`cron_restart` in `ecosystem.config.cjs`), which gives a fresh session and re-registers all tasks automatically.
 
 | File | Role |
 |------|------|
-| `CLAUDE.md` | Bot brain — 6-step startup, ongoing behavior rules |
+| `CLAUDE.md` | Bot brain — startup procedure, ongoing behavior rules |
+| `config.json` | Admin chat ID (gitignored, created from example) |
 | `tasks/_*.md` | Example tasks (tracked). User tasks are gitignored |
 | `memory/*.md` | Persistent cross-session knowledge (gitignored) |
-| `config.json` | Admin chat ID (gitignored, created from example) |
 | `templates/` | Message templates (`.example.md` tracked, user copy gitignored) |
 | `start.sh` | Launches Claude via `expect` (allocates a PTY) |
 | `ecosystem.config.cjs` | PM2: auto-restart, daily fresh session at 4 AM |
@@ -44,7 +57,7 @@ cd telegram-klavdiy-bot
 
 Create a bot via [@BotFather](https://t.me/BotFather) → `/newbot` → copy the token.
 
-Install the plugin and configure the token:
+Install the Telegram channel plugin and configure the token:
 
 ```sh
 claude
@@ -85,7 +98,7 @@ Copy an example and remove the `_` prefix:
 cp tasks/_example-ping.md tasks/ping.md
 ```
 
-Edit the schedule and prompt to your needs. See [Tasks](#tasks) below for the format.
+Edit the schedule and prompt to your needs. See [Tasks](#tasks) below for the format. There are four examples included: `_example-ping`, `_example-news-digest`, `_example-plugin-update`, and `_example-health-check`.
 
 ### 5. Customize the startup template (optional)
 
