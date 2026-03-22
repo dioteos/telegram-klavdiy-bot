@@ -2,20 +2,27 @@
 
 Always-on Claude Code Telegram bot. PM2 keeps it running, `CLAUDE.md` is the brain.
 
+> Klavdiy (Клавдій) is the Ukrainian name for Claude.
+
 > **Warning:** This bot runs with `--dangerously-skip-permissions` — Claude Code executes all tool calls without asking for confirmation. Only run on a trusted machine and restrict access via `/telegram:access policy allowlist`.
 
 ## How it works
 
+`start.sh` launches Claude Code inside an `expect` PTY wrapper with a 23-hour safety timeout. Claude receives an initial prompt that triggers the 6-step startup procedure defined in `CLAUDE.md`: load config, read memory, register scheduled tasks, create a session log, send a startup summary via Telegram, and process any restart notes. After startup, it listens for Telegram messages and executes cron tasks.
+
 ```
-start.sh → expect (PTY) → claude --channels telegram → CLAUDE.md → registers tasks → listens
+start.sh → expect (PTY, 23h timeout)
+  → claude --channels telegram --dangerously-skip-permissions "<startup prompt>"
+    → CLAUDE.md startup → registers tasks → listens
 ```
 
 | File | Role |
 |------|------|
-| `CLAUDE.md` | Bot brain — 6-step startup, ongoing behavior |
-| `tasks/*.md` | Scheduled prompts (cron in YAML frontmatter) |
-| `memory/*.md` | Persistent cross-session knowledge |
-| `config.json` | Admin chat ID (git-ignored) |
+| `CLAUDE.md` | Bot brain — 6-step startup, ongoing behavior rules |
+| `tasks/_*.md` | Example tasks (tracked). User tasks are gitignored |
+| `memory/*.md` | Persistent cross-session knowledge (gitignored) |
+| `config.json` | Admin chat ID (gitignored, created from example) |
+| `templates/` | Message templates (`.example.md` tracked, user copy gitignored) |
 | `start.sh` | Launches Claude via `expect` (allocates a PTY) |
 | `ecosystem.config.cjs` | PM2: auto-restart, daily fresh session at 4 AM |
 
@@ -70,7 +77,25 @@ DM your bot on Telegram — you'll get a pairing code:
 /telegram:access policy allowlist
 ```
 
-### 4. Start
+### 4. Create your tasks
+
+Copy an example and remove the `_` prefix:
+
+```sh
+cp tasks/_example-ping.md tasks/ping.md
+```
+
+Edit the schedule and prompt to your needs. See [Tasks](#tasks) below for the format.
+
+### 5. Customize the startup template (optional)
+
+```sh
+cp templates/startup-summary.example.md templates/startup-summary.md
+```
+
+Edit the template to change language or format. If you skip this step, the bot uses the English example.
+
+### 6. Start
 
 ```sh
 pm2 install pm2-logrotate
@@ -83,7 +108,7 @@ Done. Message your bot on Telegram.
 
 ## Tasks
 
-Drop `.md` files in `tasks/` to schedule recurring jobs:
+Task files live in `tasks/`. Files prefixed with `_` are tracked examples — the bot skips them. Your actual tasks are regular `.md` files (gitignored, never pushed).
 
 ```yaml
 ---
@@ -104,15 +129,16 @@ Manage via Telegram: "add a task", "list tasks", "disable daily-news".
 
 ## Customization
 
-- **Tasks** → add `.md` files to `tasks/`
-- **Rules** → create `.claude/rules/*.md` ([docs](https://code.claude.com/docs/en/memory))
+- **Tasks** → copy `tasks/_example-*.md`, remove `_` prefix, edit
+- **Language** → edit your task prompts and `templates/startup-summary.md`
+- **Rules** → create `.claude/rules/*.md` ([Claude Code docs](https://docs.anthropic.com/en/docs/claude-code))
 - **Preferences** → edit `CLAUDE.md` or `~/.claude/CLAUDE.md`
 
 ## PM2
 
 ```sh
-pm2 status                    # check status
-pm2 logs telegram-klavdiy     # view logs
-pm2 restart telegram-klavdiy  # restart
-pm2 stop telegram-klavdiy     # stop
+pm2 status                   # check status
+pm2 logs claude-telegram     # view logs
+pm2 restart claude-telegram  # restart
+pm2 stop claude-telegram     # stop
 ```

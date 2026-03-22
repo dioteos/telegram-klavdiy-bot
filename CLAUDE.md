@@ -30,6 +30,7 @@ Read `./logs/INSTRUCTIONS.md`. Create/append to today's log. Clean up old logs p
 ### 5. Summary
 
 Send startup summary to admin via Telegram (`admin_chat_id`) using the template from `./templates/startup-summary.md`.
+If that file doesn't exist, copy `./templates/startup-summary.example.md` to `./templates/startup-summary.md` first.
 Fill in placeholders with actual values from this session's startup.
 If no enabled tasks, confirm bot is online.
 If any memory files have `updated` older than 30 days — add a warning line to the summary with the stale file names.

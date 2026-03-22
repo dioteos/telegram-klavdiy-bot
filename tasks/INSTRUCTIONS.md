@@ -41,12 +41,18 @@ When user asks to create, modify, list, or delete tasks via Telegram:
 - **Enable/disable**: toggle `enabled` in frontmatter
 - **Delete**: remove the file
 
+## File conventions
+
+- `_*.md` — tracked example templates. The bot skips these (never registered). Users copy them and remove the `_` prefix to create their own tasks.
+- Regular `.md` files — user tasks. Gitignored so personal schedules and prompts are never pushed.
+- `INSTRUCTIONS.md` — this file. Always skipped by the bot.
+
 ## Skip rules
 
 Skip these files when loading tasks:
 - `INSTRUCTIONS.md` (this file)
-- Files starting with `_` (drafts/notes)
+- Files starting with `_` (example templates)
 
 ## Bootstrap
 
-If this folder has no task files (fresh clone): inform user that no tasks are configured, offer to create an example.
+If this folder has no loadable task files (fresh clone): inform user that no tasks are configured, suggest copying an example: `cp tasks/_example-ping.md tasks/ping.md`.

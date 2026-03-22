@@ -1,6 +1,6 @@
 ---
 schedule: "0 12 * * *"
-enabled: false
+enabled: true
 ---
 
 Send a test message to admin: "Ping! Bot is running."

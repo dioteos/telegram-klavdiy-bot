@@ -2,8 +2,19 @@
 config.json
 node_modules/
 .claude/
+
 memory/*.md
 !memory/INSTRUCTIONS.md
+
 logs/*.md
 !logs/INSTRUCTIONS.md
+
+# User tasks are gitignored — only _example-*.md templates are tracked
+tasks/*.md
+!tasks/_*.md
+!tasks/INSTRUCTIONS.md
+
+# User's customized startup template
+templates/startup-summary.md
+
 restart_note.md
