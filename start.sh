@@ -13,6 +13,11 @@ export PATH
 
 cd "$(dirname "$0")"
 
+# Kill competing Telegram plugin instances so only this bot polls getUpdates.
+# Multiple consumers on the same bot token cause 409 Conflict — messages get lost.
+pkill -f 'bun.*telegram.*server\.ts' 2>/dev/null || true
+sleep 1
+
 # expect allocates its own PTY — Claude Code requires a TTY
 # Timeout = 23 hours — safety net for hung sessions.
 # PM2 cron_restart at 4 AM gives a fresh session daily;
