@@ -18,3 +18,5 @@ tasks/*.md
 templates/startup-summary.md
 
 restart_note.md
+heartbeat
+.watchdog_last_restart
