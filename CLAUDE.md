@@ -4,8 +4,23 @@ Always-on Claude Code bot for Telegram. Powered by PM2 + Claude Channels.
 
 ## Startup
 
-When Telegram plugin tools are available, execute this startup procedure in strict order.
-If the Telegram plugin is not loaded — skip startup, log the reason, and wait for user input.
+Execute this startup procedure in strict order.
+
+### 0. Wait for Telegram plugin
+
+The Telegram plugin loads asynchronously — it may not be ready when Claude starts.
+Search for Telegram tools via ToolSearch. If not found, sleep 5 seconds and retry.
+Retry up to 12 times (60 seconds total). If still not available after all retries — write the reason to `./restart_note.md` and exit immediately (run `exit 1` via Bash). PM2 will restart the bot automatically. **Never hang waiting for user input — this is an unattended bot.**
+
+### 0.5. Verify Telegram plugin patch
+
+After the plugin is confirmed available, verify the local `PATCH:no-preview` patch is in place in the **marketplaces** copy (that's the one the MCP server actually runs — the `cache/` copy is a stale artifact, do not patch it):
+
+```
+grep -c "PATCH:no-preview" ~/.claude/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts
+```
+
+Expected: ≥ 2. If less — re-apply the patch per memory `project_telegram_plugin_patch.md`, write `./restart_note.md` ("Patch reapplied for telegram plugin no-preview — restart triggered"), and run `pm2 restart telegram-klavdiy`. The next startup will load the patched plugin.
 
 ### 1. Config
 
@@ -44,11 +59,20 @@ Check for `./restart_note.md`. If it exists:
 
 If the file doesn't exist — skip this step (normal cold start).
 
+## Heartbeat
+
+A watchdog process monitors this bot's health via `./heartbeat`. You **must** keep it fresh:
+- Run `touch ./heartbeat` immediately after completing Step 5 (startup summary)
+- Run `touch ./heartbeat` after processing each Telegram message
+- Run `touch ./heartbeat` after executing each cron task
+
+If the heartbeat file is older than 10 minutes, the watchdog will restart the bot. This is critical for reliability — never skip heartbeat updates.
+
 ## Ongoing
 
 - On cron trigger: execute the task prompt, send results to admin
 - CronCreate jobs are session-only, auto-expire after 7 days
-- PM2 restarts the bot daily at 4:00 AM for a fresh session — tasks re-register automatically on startup
+- PM2 restarts the bot at 4:00 AM and 4:00 PM daily for a fresh session — tasks re-register automatically on startup
 - Save meaningful cross-session insights to `./memory/` per its INSTRUCTIONS.md
 - Log significant events to today's log in `./logs/`
 - When user asks to manage tasks via Telegram → follow `./tasks/INSTRUCTIONS.md`
