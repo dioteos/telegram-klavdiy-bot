@@ -20,3 +20,7 @@ templates/startup-summary.md
 restart_note.md
 heartbeat
 .watchdog_last_restart
+
+# Runtime state
+news/
+state.json

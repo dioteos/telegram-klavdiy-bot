@@ -12,15 +12,34 @@ The Telegram plugin loads asynchronously — it may not be ready when Claude sta
 Search for Telegram tools via ToolSearch. If not found, sleep 5 seconds and retry.
 Retry up to 12 times (60 seconds total). If still not available after all retries — write the reason to `./restart_note.md` and exit immediately (run `exit 1` via Bash). PM2 will restart the bot automatically. **Never hang waiting for user input — this is an unattended bot.**
 
-### 0.5. Verify Telegram plugin patch
+### 0.5. Verify Telegram plugin patch — BOTH paths
 
-After the plugin is confirmed available, verify the local `PATCH:no-preview` patch is in place in the **marketplaces** copy (that's the one the MCP server actually runs — the `cache/` copy is a stale artifact, do not patch it):
+The plugin's `server.ts` exists in two locations and the REAL running path flips between them across versions. You **must** treat both as authoritative and patch both:
 
-```
-grep -c "PATCH:no-preview" ~/.claude/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts
-```
+1. Find the real running path:
+   ```
+   ps -ef | grep "bun run --cwd" | grep telegram | grep -v grep
+   ```
+   The `--cwd` argument is the ground truth for the MCP subprocess.
 
-Expected: ≥ 2. If less — re-apply the patch per memory `project_telegram_plugin_patch.md`, write `./restart_note.md` ("Patch reapplied for telegram plugin no-preview — restart triggered"), and run `pm2 restart telegram-klavdiy`. The next startup will load the patched plugin.
+2. Read installed version from `~/.claude/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/.claude-plugin/plugin.json` (field `version`).
+
+3. Compare against `./state.json` → `last_plugin_version`. If different (or state.json missing the field) — this is a plugin update. Send a message to admin **before proceeding further**: `⚠️ Telegram плагін оновлено: {prev} → {current}. Переприменюю патч і перевантажую бот.` Continue with patching.
+
+4. Check PATCH markers in BOTH candidate paths:
+   ```
+   grep -c "PATCH:no-preview" ~/.claude/plugins/cache/claude-plugins-official/telegram/<version>/server.ts
+   grep -c "PATCH:no-preview" ~/.claude/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts
+   ```
+   Expected: ≥ 2 in each path that exists. A path that doesn't exist yet (e.g. cache/<version>/ before the plugin has been loaded once) can be skipped — it'll appear on next plugin spawn.
+
+5. If ANY existing path has <2 markers — re-apply the patch to THAT path per memory `project_telegram_plugin_patch.md`. Even if the running path is already patched, also patch the non-running path (insurance for when the path flips). Then:
+   - Update `./state.json` → `last_plugin_version = <current>`
+   - Write `./restart_note.md` ("Patch reapplied to {path(s)} for telegram plugin v{version} no-preview — restart triggered")
+   - Run `pm2 restart telegram-klavdiy`
+   - Exit — the next startup will load the patched plugin.
+
+6. If both paths OK AND version unchanged — update `./state.json` → `last_plugin_version = <current>` (idempotent) and continue to step 1.
 
 ### 1. Config
 
