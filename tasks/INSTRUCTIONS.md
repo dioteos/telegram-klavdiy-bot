@@ -32,6 +32,18 @@ On startup, for each file with `enabled: true`:
 4. If CronCreate fails → log error, continue with remaining tasks.
 5. If task execution fails at runtime → send a short error message to admin (task name + what went wrong). Never fail silently.
 
+After all tasks registered, call `CronList` and compare count to the number of enabled tasks. If short — retry missing ones once. If still short — notify admin explicitly. This catches CronCreate deduplication or silent drops.
+
+## Telemetry on every fire
+
+Every task's first action (before the real work) is:
+1. `touch ./heartbeat`
+2. Update `./state.json.last_fire["{task_name}"] = "<ISO8601 now with timezone>"` (use `date -Iseconds` or equivalent).
+
+This gives us a timestamp per task. Without it we can't tell "cron never fired" from "task crashed mid-way".
+
+The task name key matches the filename without `.md` extension (`news-collect-morning`, `daily-health-check`, etc).
+
 ## Management
 
 When user asks to create, modify, list, or delete tasks via Telegram:

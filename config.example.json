@@ -1,3 +1,6 @@
 {
-  "admin_chat_id": ""
+  "admin_chat_id": "",
+  "channel_chat_id": "",
+  "target_chat_id": "",
+  "target_mode": "dm-test"
 }

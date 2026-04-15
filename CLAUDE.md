@@ -43,9 +43,14 @@ The plugin's `server.ts` exists in two locations and the REAL running path flips
 
 ### 1. Config
 
-Read `./config.json` → get `admin_chat_id`.
-If missing or unparseable → read `config.example.json` for schema, ask user via Telegram or AskUserQuestion.
+Read `./config.json` → get:
+- `admin_chat_id` — for DM notifications and confirmations (required).
+- `channel_chat_id` — public channel for `target_mode: "channel"` publishes.
+- `target_chat_id` — where the digest publish task actually sends (DM for testing, channel for prod).
+- `target_mode` — `"dm-test"` or `"channel"`. Inform downstream tasks which mode we're in.
+
 If `admin_chat_id` is empty → stop startup, notify user that config.json needs a valid chat ID.
+If `target_chat_id` is empty → default to `admin_chat_id` and log a warning.
 
 ### 2. Memory
 
@@ -56,6 +61,25 @@ If no memory files exist → follow bootstrap procedure from INSTRUCTIONS.md.
 
 Read `./tasks/INSTRUCTIONS.md`, then all `.md` files in `./tasks/` (skip `INSTRUCTIONS.md` and files starting with `_`).
 For each enabled task → register via CronCreate per INSTRUCTIONS.md rules.
+
+**Sanity check after registration (CRITICAL):** call `CronList` and verify the returned job count matches the number of enabled tasks. If fewer — retry the missing ones once. If still fewer after retry — notify admin with a specific blocker (`⚠️ Registered N of M tasks, missing: {list}`) and continue with whatever registered. Never pretend success if count is wrong.
+
+**Initialize telemetry:** ensure `state.json.last_fire` has a key for every enabled task (null if never fired). This is how later tasks — and the watchdog — detect zombie sessions.
+
+### 3.5. Missed-slot recovery (auto-catchup)
+
+Pm2 restarts at 04:00 / 16:00 can land the bot between cron slots, and occasional session hangs can kill a slot silently. On every startup — auto-run any news-collect slot whose nominal time has already passed today but is missing from `./news/collect-YYYY-MM-DD.json.fills`. **Do not ask the admin** — Anton's explicit rule (2026-04-15): detect and recover without confirmation, then report the outcome.
+
+Nominal times (EEST): `morning = 08:03`, `midday = 13:07`, `afternoon = 17:47`.
+
+For each slot whose time has passed and which is not in `fills`:
+1. Run the slot's logic inline (same WebSearch + dedup + append as the cron task).
+2. Append `{slot, ts: now, added_per_category, note: "startup-catchup"}` to `fills`.
+3. Update `state.json.last_fire["news-collect-<slot>"] = now`.
+
+Also check `news-digest-prenotify` (18:57) and `news-digest-publish` (19:57) — if past time and `state.json.last_fire` for that task is NOT today's date, run the logic inline. Exception: never auto-run publish between 20:00 and 08:00 (to avoid late-night channel spam) — log and skip.
+
+Send admin a short summary after catchup: `🩹 Автодогін: відпрацював {slot(s)} ({reason: missed due to pm2 restart / session hang}). Додано {counts per category}.` No permission prompt — informational only.
 
 ### 4. Logs
 
@@ -69,11 +93,13 @@ Fill in placeholders with actual values from this session's startup.
 If no enabled tasks, confirm bot is online.
 If any memory files have `updated` older than 30 days — add a warning line to the summary with the stale file names.
 
+**Quiet hours (23:00–08:00 local):** skip the routine startup summary. Log it locally and touch heartbeat, but do not message the admin unless something is broken (patch drift, task count mismatch, stale memory, or any blocker that would be included in the summary). Boring "online, 9/9 tasks registered" messages wake the admin at 2am for nothing.
+
 ### 6. Restart continuity
 
 Check for `./restart_note.md`. If it exists:
 1. Read its content
-2. Send a follow-up message to admin via Telegram based on the content
+2. Send a follow-up message to admin via Telegram based on the content — **unless it is quiet hours (23:00–08:00 local) AND the note describes a routine event** (plugin patch reapplied, pipeline rebuild, expected restart). Log it to today's session log instead. Only wake the admin at night if the note describes something they'd want to know immediately (patch call-sites changed shape, config missing, repeated failures).
 3. Delete the file
 
 If the file doesn't exist — skip this step (normal cold start).
@@ -92,7 +118,20 @@ If the heartbeat file is older than 10 minutes, the watchdog will restart the bo
 - On cron trigger: execute the task prompt, send results to admin
 - CronCreate jobs are session-only, auto-expire after 7 days
 - PM2 restarts the bot at 4:00 AM and 4:00 PM daily for a fresh session — tasks re-register automatically on startup
+- **Telemetry on every cron fire:** every task must update `state.json.last_fire[task_name] = <ISO8601 now>` as its FIRST action, before doing real work. This lets us distinguish "cron never fired" from "cron fired but task failed mid-way".
 - Save meaningful cross-session insights to `./memory/` per its INSTRUCTIONS.md
 - Log significant events to today's log in `./logs/`
 - When user asks to manage tasks via Telegram → follow `./tasks/INSTRUCTIONS.md`
 - Before `pm2 restart`: write `./restart_note.md` — plain text, max 500 characters, enough context for the next session to understand what happened and notify the admin. The file is consumed and deleted on next startup (step 6).
+
+## News pipeline (KISS, 3 stages)
+
+News generation is decoupled into collect / prenotify / publish so a single task hang can never silently miss a digest.
+
+1. **Collect** — 3 tasks during the day (`news-collect-morning`, `-midday`, `-afternoon`). Each runs WebSearch per category, dedups against prior 3 days + the in-progress collect file, appends new items to `./news/collect-YYYY-MM-DD.json`. No Telegram send.
+2. **Prenotify** (18:57, `news-digest-prenotify`) — reads the collect file. If any category has <3 items, runs inline catchup. Sends admin DM a preview with counts and warnings. This is also the last rescue if all three collect tasks failed (emergency-collect from scratch).
+3. **Publish** (19:57, `news-digest-publish`) — reads the collect file, formats MarkdownV2, publishes to `config.target_chat_id`. Still has a final safety-net catchup for any empty category. Saves final `./news/YYYY-MM-DD.json` with message_ids, sends admin confirmation.
+
+Each stage is idempotent: re-running a collect slot dedups; re-running prenotify adds to the file; re-running publish would overwrite the final file (acceptable when testing).
+
+Switch between testing and prod by editing `config.json.target_chat_id` (and `target_mode` label). The admin controls this via DM: "prod" → flip to `channel_chat_id`, "dm-test" → flip to `admin_chat_id`.
