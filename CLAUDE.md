@@ -77,7 +77,7 @@ For each slot whose time has passed and which is not in `fills`:
 2. Append `{slot, ts: now, added_per_category, note: "startup-catchup"}` to `fills`.
 3. Update `state.json.last_fire["news-collect-<slot>"] = now`.
 
-Also check `news-digest-prenotify` (18:57) and `news-digest-publish` (19:57) — if past time and `state.json.last_fire` for that task is NOT today's date, run the logic inline. Exception: never auto-run publish between 20:00 and 08:00 (to avoid late-night channel spam) — log and skip.
+Also check `news-digest-prenotify` (18:57) and `news-digest-publish` (19:15) — if past time and `state.json.last_fire` for that task is NOT today's date, run the logic inline. Exception: never auto-run publish between 20:00 and 08:00 (to avoid late-night channel spam) — log and skip.
 
 Send admin a short summary after catchup: `🩹 Автодогін: відпрацював {slot(s)} ({reason: missed due to pm2 restart / session hang}). Додано {counts per category}.` No permission prompt — informational only.
 
@@ -93,13 +93,13 @@ Fill in placeholders with actual values from this session's startup.
 If no enabled tasks, confirm bot is online.
 If any memory files have `updated` older than 30 days — add a warning line to the summary with the stale file names.
 
-**Quiet hours (23:00–08:00 local):** skip the routine startup summary. Log it locally and touch heartbeat, but do not message the admin unless something is broken (patch drift, task count mismatch, stale memory, or any blocker that would be included in the summary). Boring "online, 9/9 tasks registered" messages wake the admin at 2am for nothing.
+**Quiet hours (00:00–08:00 local):** skip the routine startup summary. Log it locally and touch heartbeat, but do not message the admin unless something is broken (patch drift, task count mismatch, stale memory, or any blocker that would be included in the summary). Boring "online, 9/9 tasks registered" messages wake the admin at 2am for nothing.
 
 ### 6. Restart continuity
 
 Check for `./restart_note.md`. If it exists:
 1. Read its content
-2. Send a follow-up message to admin via Telegram based on the content — **unless it is quiet hours (23:00–08:00 local) AND the note describes a routine event** (plugin patch reapplied, pipeline rebuild, expected restart). Log it to today's session log instead. Only wake the admin at night if the note describes something they'd want to know immediately (patch call-sites changed shape, config missing, repeated failures).
+2. Send a follow-up message to admin via Telegram based on the content — **unless it is quiet hours (00:00–08:00 local) AND the note describes a routine event** (plugin patch reapplied, pipeline rebuild, expected restart). Log it to today's session log instead. Only wake the admin at night if the note describes something they'd want to know immediately (patch call-sites changed shape, config missing, repeated failures).
 3. Delete the file
 
 If the file doesn't exist — skip this step (normal cold start).
@@ -111,7 +111,7 @@ A watchdog process monitors this bot's health via `./heartbeat`. You **must** ke
 - Run `touch ./heartbeat` after processing each Telegram message
 - Run `touch ./heartbeat` after executing each cron task
 
-If the heartbeat file is older than 10 minutes, the watchdog will restart the bot. This is critical for reliability — never skip heartbeat updates.
+If the heartbeat file is older than 15 minutes, the watchdog will restart the bot (after a 5-minute grace period post-restart). This is critical for reliability — never skip heartbeat updates.
 
 ## Ongoing
 
@@ -130,7 +130,7 @@ News generation is decoupled into collect / prenotify / publish so a single task
 
 1. **Collect** — 3 tasks during the day (`news-collect-morning`, `-midday`, `-afternoon`). Each runs WebSearch per category, dedups against prior 3 days + the in-progress collect file, appends new items to `./news/collect-YYYY-MM-DD.json`. No Telegram send.
 2. **Prenotify** (18:57, `news-digest-prenotify`) — reads the collect file. If any category has <3 items, runs inline catchup. Sends admin DM a preview with counts and warnings. This is also the last rescue if all three collect tasks failed (emergency-collect from scratch).
-3. **Publish** (19:57, `news-digest-publish`) — reads the collect file, formats MarkdownV2, publishes to `config.target_chat_id`. Still has a final safety-net catchup for any empty category. Saves final `./news/YYYY-MM-DD.json` with message_ids, sends admin confirmation.
+3. **Publish** (19:15, `news-digest-publish`) — reads the collect file, formats MarkdownV2, publishes to `config.target_chat_id`. Still has a final safety-net catchup for any empty category. Saves final `./news/YYYY-MM-DD.json` with message_ids, sends admin confirmation.
 
 Each stage is idempotent: re-running a collect slot dedups; re-running prenotify adds to the file; re-running publish would overwrite the final file (acceptable when testing).
 

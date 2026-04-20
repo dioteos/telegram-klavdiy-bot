@@ -20,7 +20,7 @@ sleep 1
 
 # expect allocates its own PTY — Claude Code requires a TTY
 # Timeout = 23 hours — safety net for hung sessions.
-# PM2 cron_restart at 4 AM gives a fresh session daily;
+# PM2 cron_restart at 4 AM / 4 PM gives a fresh session twice daily;
 # this catches sessions that hang and never exit on their own.
 exec expect -c '
 set timeout 82800
