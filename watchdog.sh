@@ -11,7 +11,11 @@ CHECK_INTERVAL=120       # seconds between checks
 GRACE_PERIOD=300         # seconds after restart before checking heartbeat
 HEARTBEAT_MAX_AGE=900    # seconds (15 min) — heartbeat older than this = stale
 COOLDOWN=600             # seconds — minimum time between watchdog-triggered restarts
+EXTENDED_COOLDOWN=1800   # seconds — used after escalation to silence spam (30 min)
+ESCALATION_THRESHOLD=3   # consecutive restarts without heartbeat recovery → admin escalation
 LAST_RESTART_FILE="$BOT_DIR/.watchdog_last_restart"
+COUNTER_FILE="$BOT_DIR/.watchdog_consecutive_restarts"
+ESCALATED_FILE="$BOT_DIR/.watchdog_escalated"
 
 # Telegram notification config
 TELEGRAM_ENV_FILE="$HOME/.claude/channels/telegram/.env"
@@ -71,13 +75,37 @@ print(procs[0]['pm2_env']['pm_uptime'] if procs else 0)
   fi
 }
 
+read_counter() {
+  if [ -f "$COUNTER_FILE" ]; then
+    cat "$COUNTER_FILE"
+  else
+    echo 0
+  fi
+}
+
+write_counter() {
+  echo "$1" > "$COUNTER_FILE"
+}
+
+current_cooldown() {
+  # If we've already escalated and haven't reset, use the extended cooldown
+  # to avoid spam while admin investigates.
+  if [ -f "$ESCALATED_FILE" ]; then
+    echo "$EXTENDED_COOLDOWN"
+  else
+    echo "$COOLDOWN"
+  fi
+}
+
 is_in_cooldown() {
   if [ -f "$LAST_RESTART_FILE" ]; then
     local last_restart
     last_restart=$(cat "$LAST_RESTART_FILE")
     local now
     now=$(date +%s)
-    if (( now - last_restart < COOLDOWN )); then
+    local cd
+    cd=$(current_cooldown)
+    if (( now - last_restart < cd )); then
       return 0  # in cooldown
     fi
   fi
@@ -91,10 +119,36 @@ do_restart() {
     notify_admin "🐕 Watchdog: рестарт пропущено (cooldown). Причина: $reason"
     return
   fi
-  log "RESTARTING — reason: $reason"
-  notify_admin "🐕 Watchdog: перезапускаю бот. Причина: $reason"
+  local counter
+  counter=$(read_counter)
+  counter=$((counter + 1))
+  write_counter "$counter"
+  log "RESTARTING (consecutive=$counter) — reason: $reason"
+  notify_admin "🐕 Watchdog: перезапускаю бот (#$counter поспіль). Причина: $reason"
   date +%s > "$LAST_RESTART_FILE"
   pm2 restart "$PROCESS_NAME" 2>&1 | while read -r line; do log "  $line"; done
+
+  # Escalation: if multiple consecutive restarts without heartbeat recovery,
+  # send admin a louder alert and switch to extended cooldown.
+  if [ "$counter" -ge "$ESCALATION_THRESHOLD" ] && [ ! -f "$ESCALATED_FILE" ]; then
+    touch "$ESCALATED_FILE"
+    notify_admin "🚨 Watchdog ескалація: $counter рестартів поспіль не повертають здоровʼя. Можливо потрібне ручне втручання. Cooldown → ${EXTENDED_COOLDOWN}s. Перевір 'pm2 logs telegram-klavdiy' і Telegram MCP plugin."
+  fi
+}
+
+reset_counter_on_recovery() {
+  # Called when heartbeat is fresh AND we are past the grace period.
+  # Means the most recent restart "took" — reset escalation state.
+  local counter
+  counter=$(read_counter)
+  if [ "$counter" -gt 0 ] || [ -f "$ESCALATED_FILE" ]; then
+    log "heartbeat fresh — resetting consecutive counter (was $counter), clearing escalation"
+    write_counter 0
+    rm -f "$ESCALATED_FILE"
+    if [ "$counter" -ge "$ESCALATION_THRESHOLD" ]; then
+      notify_admin "✅ Watchdog: бот відновився після $counter рестартів. Cooldown повертається до ${COOLDOWN}s."
+    fi
+  fi
 }
 
 log "started — checking every ${CHECK_INTERVAL}s, grace ${GRACE_PERIOD}s, max heartbeat age ${HEARTBEAT_MAX_AGE}s"
@@ -121,7 +175,26 @@ print(procs[0]['pm2_env']['status'] if procs else 'missing')
     continue
   fi
 
-  # 3. Check heartbeat file
+  # 3. Liveness check for MCP plugin subprocess (the actual cause of "bot is deaf").
+  # Bot's claude must have a bun MCP child running the telegram plugin server.
+  # If missing, REPL can SEND via curl fallback but cannot RECEIVE getUpdates → deaf.
+  # Heartbeat alone misses this because the keepalive cron inside the REPL keeps touching it.
+  expect_pid=""
+  for pid in $(pgrep -f 'expect -c' 2>/dev/null || true); do
+    if ps -p "$pid" -o args= 2>/dev/null | grep -q 'claude --channels plugin:telegram'; then
+      expect_pid="$pid"
+      break
+    fi
+  done
+  if [ -n "$expect_pid" ]; then
+    claude_pid=$(pgrep -P "$expect_pid" 2>/dev/null | head -1 || true)
+    if [ -n "$claude_pid" ] && ! pgrep -P "$claude_pid" -f 'bun.*telegram' >/dev/null 2>&1; then
+      do_restart "MCP subprocess missing under bot claude pid $claude_pid (deaf to incoming)"
+      continue
+    fi
+  fi
+
+  # 4. Check heartbeat file
   if [ ! -f "$HEARTBEAT_FILE" ]; then
     do_restart "no heartbeat file after ${uptime_sec}s uptime"
     continue
@@ -134,5 +207,8 @@ print(procs[0]['pm2_env']['status'] if procs else 'missing')
 
   if [ "$heartbeat_age" -gt "$HEARTBEAT_MAX_AGE" ]; then
     do_restart "heartbeat stale (${heartbeat_age}s old, max ${HEARTBEAT_MAX_AGE}s)"
+  else
+    # Heartbeat is fresh AND we're past grace period → bot looks healthy
+    reset_counter_on_recovery
   fi
 done

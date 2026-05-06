@@ -15,7 +15,23 @@ cd "$(dirname "$0")"
 
 # Kill competing Telegram plugin instances so only this bot polls getUpdates.
 # Multiple consumers on the same bot token cause 409 Conflict — messages get lost.
-pkill -f 'bun.*telegram.*server\.ts' 2>/dev/null || true
+# Two patterns: the `bun run` wrapper (cwd contains telegram), and the actual
+# `bun server.ts` (no telegram in argv but its parent wrapper is the wrapper).
+# Killing the wrapper alone is enough — server.ts dies via stdin EOF + orphan
+# watchdog. We kill both to be safe even if reparenting weirdness happens.
+pkill -f 'bun run --cwd.*telegram.*start' 2>/dev/null || true
+# Kill bun server.ts whose --cwd ancestor was the telegram plugin path.
+# After the wrapper kill above, only orphan server.ts processes survive — get
+# them via cwd inspection (Linux /proc has cwd; macOS uses lsof which is slow).
+# Cheaper heuristic: the plugin's PID lockfile holds the live server.ts PID.
+if [ -r "$HOME/.claude/channels/telegram/bot.pid" ]; then
+  stale_pid=$(cat "$HOME/.claude/channels/telegram/bot.pid" 2>/dev/null | tr -d '[:space:]')
+  if [ -n "$stale_pid" ] && [ "$stale_pid" -gt 1 ] 2>/dev/null; then
+    if ps -p "$stale_pid" -o args= 2>/dev/null | grep -q 'server\.ts'; then
+      kill "$stale_pid" 2>/dev/null || true
+    fi
+  fi
+fi
 sleep 1
 
 # expect allocates its own PTY — Claude Code requires a TTY

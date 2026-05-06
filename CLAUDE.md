@@ -26,20 +26,34 @@ The plugin's `server.ts` exists in two locations and the REAL running path flips
 
 3. Compare against `./state.json` → `last_plugin_version`. If different (or state.json missing the field) — this is a plugin update. Send a message to admin **before proceeding further**: `⚠️ Telegram плагін оновлено: {prev} → {current}. Переприменюю патч і перевантажую бот.` Continue with patching.
 
-4. Check PATCH markers in BOTH candidate paths:
+4. Check PATCH markers in BOTH candidate paths. Two patch families — see `memory/project_telegram_plugin_patch.md` for full diff and rationale.
+
+   **Family A — `PATCH:no-preview`** (always, regardless of version):
    ```
    grep -c "PATCH:no-preview" ~/.claude/plugins/cache/claude-plugins-official/telegram/<version>/server.ts
    grep -c "PATCH:no-preview" ~/.claude/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/server.ts
    ```
-   Expected: ≥ 2 in each path that exists. A path that doesn't exist yet (e.g. cache/<version>/ before the plugin has been loaded once) can be skipped — it'll appear on next plugin spawn.
+   Expected: ≥ 2 in each path that exists.
 
-5. If ANY existing path has <2 markers — re-apply the patch to THAT path per memory `project_telegram_plugin_patch.md`. Even if the running path is already patched, also patch the non-running path (insurance for when the path flips). Then:
+   **Family B — `PATCH:#1424-*`** (ONLY if `installed.version < 0.0.7` — fixes mid-session disconnect bug; integrated upstream in v0.0.7):
+   ```
+   grep -c "PATCH:#1424-no-ppid"   <path>/server.ts     # ≥ 1
+   grep -c "PATCH:#1424-pid-guard" <path>/server.ts     # ≥ 1
+   grep "1>&2"                     <path>/package.json  # must match
+   ```
+   If installed.version >= 0.0.7 — Family B not needed. Stale markers are harmless.
+
+   A path that doesn't exist yet (e.g. cache/<version>/ before the plugin has been loaded once) can be skipped — it'll appear on next plugin spawn.
+
+5. If ANY required marker is missing — re-apply that family's patch to THAT path per `memory/project_telegram_plugin_patch.md`. Patch BOTH paths when both exist (insurance for when the path flips). Then:
    - Update `./state.json` → `last_plugin_version = <current>`
-   - Write `./restart_note.md` ("Patch reapplied to {path(s)} for telegram plugin v{version} no-preview — restart triggered")
+   - Write `./restart_note.md` listing which patches were re-applied to which paths.
    - Run `pm2 restart telegram-klavdiy`
    - Exit — the next startup will load the patched plugin.
 
-6. If both paths OK AND version unchanged — update `./state.json` → `last_plugin_version = <current>` (idempotent) and continue to step 1.
+   **If harness blocks the cache edit** (it sometimes does for Family B because cache is package-manager-controlled): skip cache, patch marketplaces only, write `restart_note.md` flagging the blocker, notify admin. Marketplaces-only patch is acceptable when running path is marketplaces; if running path is cache, the bug remains until admin authorizes the cache edit.
+
+6. If all required markers OK AND version unchanged — update `./state.json` → `last_plugin_version = <current>` (idempotent) and continue to step 1.
 
 ### 1. Config
 
@@ -91,9 +105,9 @@ Send startup summary to admin via Telegram (`admin_chat_id`) using the template 
 If that file doesn't exist, copy `./templates/startup-summary.example.md` to `./templates/startup-summary.md` first.
 Fill in placeholders with actual values from this session's startup.
 If no enabled tasks, confirm bot is online.
-If any memory files have `updated` older than 30 days — add a warning line to the summary with the stale file names.
+Do NOT add a stale-memory warning based on `updated` age alone — see `memory/feedback_memory_not_stale_by_date.md`. Behavioral/config memory stays correct for years; the daytime health-check (10:00) handles memory audits with content judgment.
 
-**Quiet hours (00:00–08:00 local):** skip the routine startup summary. Log it locally and touch heartbeat, but do not message the admin unless something is broken (patch drift, task count mismatch, stale memory, or any blocker that would be included in the summary). Boring "online, 9/9 tasks registered" messages wake the admin at 2am for nothing.
+**Quiet hours (00:00–08:00 local):** skip the routine startup summary. Log it locally and touch heartbeat. DM the admin ONLY for fresh breakage detected this session (patch drift this startup, task count mismatch, restart_note with non-routine content, new pipeline failure). Do NOT DM about chronic conditions that existed at the previous startup — stale-looking memory dates, same disabled tasks, same plugin version still patched. See `memory/feedback_quiet_hours_strict.md` and `memory/feedback_memory_not_stale_by_date.md`. Boring "online, N/N tasks registered" messages wake the admin at 2am for nothing.
 
 ### 6. Restart continuity
 
@@ -106,12 +120,18 @@ If the file doesn't exist — skip this step (normal cold start).
 
 ## Heartbeat
 
-A watchdog process monitors this bot's health via `./heartbeat`. You **must** keep it fresh:
-- Run `touch ./heartbeat` immediately after completing Step 5 (startup summary)
-- Run `touch ./heartbeat` after processing each Telegram message
-- Run `touch ./heartbeat` after executing each cron task
+A watchdog process monitors this bot's health via two independent signals:
 
-If the heartbeat file is older than 15 minutes, the watchdog will restart the bot (after a 5-minute grace period post-restart). This is critical for reliability — never skip heartbeat updates.
+1. **Heartbeat freshness** — `./heartbeat` file mtime. You **must** keep it fresh:
+   - Run `touch ./heartbeat` immediately after completing Step 5 (startup summary)
+   - Run `touch ./heartbeat` after processing each Telegram message
+   - Run `touch ./heartbeat` after executing each cron task
+
+   If the file is older than 15 minutes, watchdog restarts the bot (5-min grace period post-restart).
+
+2. **MCP plugin liveness** — watchdog also checks that the bot's claude has a live `bun run --cwd .../telegram/...` child process. If that subprocess dies mid-session (a recurring bug — see `memory/project_session_hanging.md`), the REPL can still SEND via curl fallback but cannot RECEIVE `getUpdates` → bot is silently deaf. Watchdog catches this within 2 minutes and restarts. Heartbeat alone misses it because the keepalive cron keeps touching the file.
+
+Both signals must pass for the bot to be considered healthy. Never skip heartbeat updates — they're cheap insurance.
 
 ## Ongoing
 
@@ -124,14 +144,20 @@ If the heartbeat file is older than 15 minutes, the watchdog will restart the bo
 - When user asks to manage tasks via Telegram → follow `./tasks/INSTRUCTIONS.md`
 - Before `pm2 restart`: write `./restart_note.md` — plain text, max 500 characters, enough context for the next session to understand what happened and notify the admin. The file is consumed and deleted on next startup (step 6).
 
-## News pipeline (KISS, 3 stages)
+## News pipeline (KISS, 3 stages — all headless via launchd)
 
-News generation is decoupled into collect / prenotify / publish so a single task hang can never silently miss a digest.
+News generation is decoupled into collect / prenotify / publish so a single task hang can never silently miss a digest. Since 2026-04-26 ALL three stages run as short-lived `claude -p` processes spawned by launchd — no REPL cron involvement.
 
-1. **Collect** — 3 tasks during the day (`news-collect-morning`, `-midday`, `-afternoon`). Each runs WebSearch per category, dedups against prior 3 days + the in-progress collect file, appends new items to `./news/collect-YYYY-MM-DD.json`. No Telegram send.
-2. **Prenotify** (18:57, `news-digest-prenotify`) — reads the collect file. If any category has <3 items, runs inline catchup. Sends admin DM a preview with counts and warnings. This is also the last rescue if all three collect tasks failed (emergency-collect from scratch).
-3. **Publish** (19:15, `news-digest-publish`) — reads the collect file, formats MarkdownV2, publishes to `config.target_chat_id`. Still has a final safety-net catchup for any empty category. Saves final `./news/YYYY-MM-DD.json` with message_ids, sends admin confirmation.
+1. **Collect** — 3 launchd jobs at 08:03 / 13:07 / 17:47 EEST. Each invocation reads `./tasks/news-collect-{slot}.md` as the spec, runs WebSearch per category, dedups against prior 3 days + the in-progress collect file, appends new items to `./news/collect-YYYY-MM-DD.json`. No Telegram send. Wrapper: `./scripts/news-collect-headless.sh {slot}`. Plists: `~/Library/LaunchAgents/com.dioteos.klavdiy.news-collect-{slot}.plist`. Logs: `./logs/headless-{slot}-YYYY-MM-DD.log` and `./logs/launchd-news-collect-{slot}.{out,err}`.
+2. **Prenotify** (18:57, launchd) — reads collect file, runs WebSearch catchup if any category <3, sends admin DM via curl (no MCP). Also last rescue: emergency-collect from scratch if collect file missing. Wrapper: `./scripts/news-digest-headless.sh prenotify`. Plist: `com.dioteos.klavdiy.news-digest-prenotify.plist`. Token: sourced from `~/.claude/channels/telegram/.env`. Logs: `./logs/headless-digest-prenotify-YYYY-MM-DD.log`.
+3. **Publish** (19:15, launchd) — reads collect file, applies freshness filter (HARD RULE 5/7 today, max 1 today-2 exception), formats MarkdownV2 via inline Python, publishes 5 categories + footer to `config.target_chat_id` via curl. Still has final safety-net catchup for any empty category. Saves `./news/YYYY-MM-DD.json` with message_ids, sends admin confirmation. Wrapper: `./scripts/news-digest-headless.sh publish`. Plist: `com.dioteos.klavdiy.news-digest-publish.plist`. Logs: `./logs/headless-digest-publish-YYYY-MM-DD.log`.
 
-Each stage is idempotent: re-running a collect slot dedups; re-running prenotify adds to the file; re-running publish would overwrite the final file (acceptable when testing).
+All `tasks/news-{collect,digest}-*.md` files have `enabled: false` — the REPL startup skips them. They exist only as the source-of-truth spec that the headless wrappers Read at runtime.
+
+Each stage is idempotent: re-running a collect slot dedups; re-running prenotify adds to fills; re-running publish would overwrite the final file (acceptable when testing).
+
+**Why fully headless:** WebSearch + many CronCreate jobs in REPL hits upstream bugs (#45590 inbound silence past 5 crons, #38866 WebSearch hangs at >90% context, #50920 autoCompact never fires on cron-wake), AND the keepalive-every-8-min flow keeps the REPL non-idle, causing daily cron jobs (prenotify 18:57 / publish 19:15) to miss their 15-min jitter windows. Externalising every news stage to short-lived processes removes that surface — each headless run starts fresh, exits cleanly, can't poison the REPL session. Net REPL cron count drops to 4 (keepalive, health-check, startup-ideas, telegram-plugin-update-check) — none of them daily-deadline-critical for content.
+
+**Curl-only for digest:** prenotify and publish do not have the Telegram MCP plugin (headless `claude -p` doesn't inherit MCP). They send via raw HTTPS to `api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage`. The token is exported by the wrapper from `~/.claude/channels/telegram/.env` before spawning claude -p. Same fallback path the REPL uses when its own MCP plugin disconnects.
 
 Switch between testing and prod by editing `config.json.target_chat_id` (and `target_mode` label). The admin controls this via DM: "prod" → flip to `channel_chat_id`, "dm-test" → flip to `admin_chat_id`.

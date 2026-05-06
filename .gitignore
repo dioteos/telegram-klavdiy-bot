@@ -7,6 +7,9 @@ memory/*.md
 !memory/INSTRUCTIONS.md
 
 logs/*.md
+logs/*.log
+logs/launchd-*.err
+logs/launchd-*.out
 !logs/INSTRUCTIONS.md
 
 # User tasks are gitignored — only _example-*.md templates are tracked
@@ -20,6 +23,7 @@ templates/startup-summary.md
 restart_note.md
 heartbeat
 .watchdog_last_restart
+.watchdog_consecutive_restarts
 
 # Runtime state
 news/
