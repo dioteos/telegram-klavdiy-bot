@@ -53,14 +53,16 @@ You are a headless one-shot news-digest-publish runner. Do exactly this:
       json.dump({'blocks': blocks, 'footer': "Є відгуки чи пропозиції\\\\? Пишіть у коментарях 👇"}, open('/tmp/digest_payload.json','w'), ensure_ascii=False)
       PYEOF
    g. **Publish each category to TARGET_CHAT_ID via curl** (parse_mode=MarkdownV2, disable_web_page_preview=true). Capture message_id from response. Order: ukraine→geo→eco→tech→other. Then post the footer the same way.
-      Pseudo: `BLOCK=$(jq -r '.blocks.ukraine' /tmp/digest_payload.json); HTTP_STATUS=$(curl -s -o /tmp/tg_resp.json -w "%{http_code}" -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" --data-urlencode "chat_id=$TARGET_CHAT_ID" -d "parse_mode=MarkdownV2" -d "disable_web_page_preview=true" --data-urlencode "text=$BLOCK")`
+      Pseudo: `BLOCK=$(jq -r '.blocks.ukraine' /tmp/digest_payload.json); HTTP_STATUS=$(curl -s --connect-timeout 10 --max-time 30 -o /tmp/tg_resp.json -w "%{http_code}" -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" --data-urlencode "chat_id=$TARGET_CHAT_ID" -d "parse_mode=MarkdownV2" -d "disable_web_page_preview=true" --data-urlencode "text=$BLOCK")`
       Then read `/tmp/tg_resp.json` for `.ok` and `.result.message_id`.
-      **Retry policy (CATEGORY blocks only — strict to avoid duplicate sends; see 2026-04-28 incident, msg 173/174 footer dupe):**
-        - Retry ONCE if and only if BOTH: (curl exit ≠ 0 OR HTTP_STATUS is empty/5xx) AND `/tmp/tg_resp.json` does NOT contain `"ok":true`.
-        - If HTTP 200 with `"ok":true` but `.result.message_id` parsing fails — DO NOT retry. The send succeeded; just log a warning, leave message_id as null in the final news/{date}.json, and continue. A duplicated category is worse than a missing message_id record.
-        - If HTTP 4xx (e.g. 400 = MarkdownV2 escape error) — DO NOT retry; the body is malformed, retry won't help. Exit non-zero after sending remaining blocks.
-        - If still failing on a category block after the eligible retry — log the failure, continue with remaining blocks (best-effort), exit non-zero at the end so wrapper notifies admin.
-      **Footer — NO RETRY EVER.** Footer is non-critical; one missing footer beats a duplicate. Send once with the same curl pattern. Capture message_id if `"ok":true`; if anything looks off, log a warning and proceed (do not exit non-zero just for footer).
+      **NO RETRY — EVER (categories OR footer).**
+      Background: 2026-05-06 UA-блок published twice because a transient curl/network failure triggered the prior retry rule even though Telegram had already accepted the first send (response just never reached us). A duplicated block is worse than a missed one — admin can't see the dup until it's already in the channel. So:
+        - Send each category EXACTLY ONCE with the curl pattern above (`--connect-timeout 10 --max-time 30` keeps a hung connection from blocking the whole run).
+        - If `/tmp/tg_resp.json` has `"ok":true` and `.result.message_id` — record it in news/{date}.json.
+        - If `"ok":true` but message_id parsing fails — record `null` for that category and continue. Add a warning to the warnings list.
+        - If anything else (curl exit ≠ 0, HTTP empty/4xx/5xx, no `"ok":true`) — record `null`, append `{category, http_status, response_snippet}` to the failures list, and continue with remaining blocks.
+        - Footer follows the same single-send rule.
+      After the loop: if the failures list is non-empty, send a SEPARATE admin DM (curl) listing exactly which categories failed and their HTTP status, e.g. `⚠️ Дайджест: не вдалося надіслати UA (HTTP=000), Tech (HTTP=503). Решта категорій надіслана. Чи передіслати вручну?`. Then exit non-zero so the wrapper also notifies admin via its fallback path. Admin decides whether to resend manually — better than the bot guessing and double-posting.
    h. Atomically write __BOT_DIR__/news/__DATE__.json with structure: {date, generated_at, channel_chat_id (=$TARGET_CHAT_ID), target_mode (=$TARGET_MODE), plugin_version, running_path:"headless-launchd", blocks: {category: {category_name, message_id, headlines, items, raw_markdown}}, footer_message_id, skipped_blocks, warnings}.
    i. Update __BOT_DIR__/state.json.last_fire["news-digest-publish"]=now ISO8601.
    j. Send admin DM (curl) with confirmation: "Дайджест опубліковано ✅ у {target_mode}\n• UA: N (id {id})\n• Geo: N (id {id})\n• Eco: N (id {id})\n• Tech: N (id {id})\n• Other: N (id {id})\nWarnings: {list or 'немає'}".
