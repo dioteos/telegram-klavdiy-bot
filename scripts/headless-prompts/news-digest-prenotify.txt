@@ -30,9 +30,16 @@ You are a headless one-shot news-digest-prenotify runner. Do exactly this:
       • emergency-collect виконано (collect-файл був відсутній)
 
       Публікація о 19:15 у {target} ({target_mode from $TARGET_MODE env: dm-test → "DM" or channel → "@klavdiynews"}).
-   g. Send the preview to admin via curl:
-      Bash: curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" --data-urlencode "chat_id=$ADMIN_CHAT_ID" --data-urlencode "text=$PREVIEW_TEXT"
-      Capture HTTP body, parse "ok":true. If not ok, retry once. If still failing, exit non-zero (wrapper will notify admin).
+   g. **Send the preview to admin via curl — EXACTLY ONCE, NO RETRY EVER.**
+      Background: 2026-05-07 prenotify посилав 3 однакові копії превʼю (msg 2009/2010/2011). Лог записав лише фінальний admin_msg_id, тому drift був прихований. Корінь: попереднє правило «retry once if not ok» інтерпретувалося ЛЛМ нечітко — він ретраїв навіть на успішних відповідях, бо парсинг `"ok":true` не завжди ловив одразу. Те саме сталося з publish 2026-05-06 (UA опублікувався двічі) — фікс описано в commit 09a5743.
+      Bash (single send, with timeouts):
+        `HTTP_STATUS=$(curl -s --connect-timeout 10 --max-time 30 -o /tmp/prenotify_resp.json -w "%{http_code}" -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" --data-urlencode "chat_id=$ADMIN_CHAT_ID" --data-urlencode "text=$PREVIEW_TEXT")`
+      Then read `/tmp/prenotify_resp.json` for `.ok` and `.result.message_id`.
+      Outcomes:
+        - `"ok":true` + message_id parsed → record admin_msg_id, success. Continue.
+        - `"ok":true` but message_id missing → success anyway, log warning, set admin_msg_id=null. DO NOT retry (повідомлення вже доставлене).
+        - curl exit ≠ 0 OR HTTP empty/4xx/5xx OR no `"ok":true` → set admin_msg_id=null, log failure with HTTP status + body snippet, exit non-zero (wrapper notifies admin). НЕ повторювати curl — Telegram sendMessage не має idempotency key, повторна спроба може створити дубль навіть якщо перший send уже долетів.
+      Pre-send sanity: ALWAYS log the curl command to stderr БЕЗ token (just the chat_id and text length), so headless-digest-prenotify-*.log shows there was exactly one send attempt.
 5. Final stdout response must be ONE line, exactly one of:
    OK prenotify __DATE__ ukraine=N geo=N eco=N tech=N other=N admin_msg_id=ID
    BLOCKER: one-line reason
