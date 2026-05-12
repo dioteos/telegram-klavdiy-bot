@@ -83,6 +83,18 @@ fi
 } >> "$LOG_FILE"
 
 EXIT_CODE=0
+# Serialize against fallback + collect — shared mkdir lock (macOS has no flock).
+LOCK_DIR="/tmp/klavdiy-claude-headless.lock.d"
+waited=0
+until mkdir "$LOCK_DIR" 2>/dev/null; do
+  sleep 1
+  waited=$((waited + 1))
+  if [ "$waited" -gt 300 ]; then
+    echo "$(date -Iseconds) ERROR: lock wait >300s, aborting" | tee -a "$LOG_FILE" >&2
+    exit 9
+  fi
+done
+trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
 cd /tmp
 perl -e 'alarm shift; exec @ARGV' "$TIMEOUT_SEC" \
   claude -p "$PROMPT" \

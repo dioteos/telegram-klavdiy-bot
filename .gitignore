@@ -28,3 +28,12 @@ heartbeat
 # Runtime state
 news/
 state.json
+
+# Hybrid safety-net runtime files
+inbox/*
+!inbox/.gitkeep
+acked/*
+!acked/.gitkeep
+fallback-fired/*
+!fallback-fired/.gitkeep
+repl-heartbeat

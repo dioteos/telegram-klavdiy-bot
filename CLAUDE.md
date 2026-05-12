@@ -43,6 +43,14 @@ The plugin's `server.ts` exists in two locations and the REAL running path flips
    ```
    If installed.version >= 0.0.7 — Family B not needed. Stale markers are harmless.
 
+   **Family C — `PATCH:hybrid-tee-*`** (always; introduced 2026-05-12 for hybrid safety-net sidecar):
+   ```
+   grep -c "PATCH:hybrid-tee-inbox" <path>/server.ts     # expect 1
+   grep -c "PATCH:hybrid-tee-ack"   <path>/server.ts     # expect 2
+   grep -c "PATCH:hybrid-tee-dedup" <path>/server.ts     # expect 1
+   ```
+   Missing any → re-apply per `memory/project_telegram_plugin_patch.md` Family C diffs.
+
    A path that doesn't exist yet (e.g. cache/<version>/ before the plugin has been loaded once) can be skipped — it'll appear on next plugin spawn.
 
 5. If ANY required marker is missing — re-apply that family's patch to THAT path per `memory/project_telegram_plugin_patch.md`. Patch BOTH paths when both exist (insurance for when the path flips). Then:
@@ -54,6 +62,17 @@ The plugin's `server.ts` exists in two locations and the REAL running path flips
    **If harness blocks the cache edit** (it sometimes does for Family B because cache is package-manager-controlled): skip cache, patch marketplaces only, write `restart_note.md` flagging the blocker, notify admin. Marketplaces-only patch is acceptable when running path is marketplaces; if running path is cache, the bug remains until admin authorizes the cache edit.
 
 6. If all required markers OK AND version unchanged — update `./state.json` → `last_plugin_version = <current>` (idempotent) and continue to step 1.
+
+### 0.6. Verify sidecar (safety-net)
+
+The safety-net sidecar runs under launchd (`com.dioteos.klavdiy.sidecar`) and answers inbound Telegram messages when the REPL hangs. On every startup:
+
+1. `launchctl list | grep klavdiy.sidecar` — expect exactly one line, status `0` (running).
+2. `pgrep -af "bun.*sidecar.ts"` — expect at least one process.
+3. If missing → `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.dioteos.klavdiy.sidecar.plist`. Write `restart_note.md` listing the bootstrap, DM admin (unless quiet hours).
+4. Touch `./repl-heartbeat` now and after every message/cron — see Heartbeat section. The sidecar fires fallback only when this file is >90 s stale.
+
+See `memory/project_hybrid_sidecar.md` for full architecture, trigger thresholds, and dedup mechanism.
 
 ### 1. Config
 
@@ -107,7 +126,7 @@ Fill in placeholders with actual values from this session's startup.
 If no enabled tasks, confirm bot is online.
 Do NOT add a stale-memory warning based on `updated` age alone — see `memory/feedback_memory_not_stale_by_date.md`. Behavioral/config memory stays correct for years; the daytime health-check (10:00) handles memory audits with content judgment.
 
-**Quiet hours (00:00–08:00 local):** skip the routine startup summary. Log it locally and touch heartbeat. DM the admin ONLY for fresh breakage detected this session (patch drift this startup, task count mismatch, restart_note with non-routine content, new pipeline failure). Do NOT DM about chronic conditions that existed at the previous startup — stale-looking memory dates, same disabled tasks, same plugin version still patched. See `memory/feedback_quiet_hours_strict.md` and `memory/feedback_memory_not_stale_by_date.md`. Boring "online, N/N tasks registered" messages wake the admin at 2am for nothing.
+**Quiet hours (00:00–08:00 local):** skip the routine startup summary. Log it locally and touch `heartbeat` and `repl-heartbeat`. DM the admin ONLY for fresh breakage detected this session (patch drift this startup, task count mismatch, restart_note with non-routine content, new pipeline failure). Do NOT DM about chronic conditions that existed at the previous startup — stale-looking memory dates, same disabled tasks, same plugin version still patched. See `memory/feedback_quiet_hours_strict.md` and `memory/feedback_memory_not_stale_by_date.md`. Boring "online, N/N tasks registered" messages wake the admin at 2am for nothing.
 
 ### 6. Restart continuity
 
@@ -123,15 +142,17 @@ If the file doesn't exist — skip this step (normal cold start).
 A watchdog process monitors this bot's health via two independent signals:
 
 1. **Heartbeat freshness** — `./heartbeat` file mtime. You **must** keep it fresh:
-   - Run `touch ./heartbeat` immediately after completing Step 5 (startup summary)
-   - Run `touch ./heartbeat` after processing each Telegram message
-   - Run `touch ./heartbeat` after executing each cron task
+   - Run `touch ./heartbeat ./repl-heartbeat` immediately after completing Step 5 (startup summary)
+   - Run `touch ./heartbeat ./repl-heartbeat` after processing each Telegram message
+   - Run `touch ./heartbeat ./repl-heartbeat` after executing each cron task
 
    If the file is older than 15 minutes, watchdog restarts the bot (5-min grace period post-restart).
 
 2. **MCP plugin liveness** — watchdog also checks that the bot's claude has a live `bun run --cwd .../telegram/...` child process. If that subprocess dies mid-session (a recurring bug — see `memory/project_session_hanging.md`), the REPL can still SEND via curl fallback but cannot RECEIVE `getUpdates` → bot is silently deaf. Watchdog catches this within 2 minutes and restarts. Heartbeat alone misses it because the keepalive cron keeps touching the file.
 
-Both signals must pass for the bot to be considered healthy. Never skip heartbeat updates — they're cheap insurance.
+3. **Sidecar safety-net (launchd)** — separate `com.dioteos.klavdiy.sidecar` agent polls `./inbox/` and fires a headless `claude -p` fallback reply when an inbound has sat >60 s without ack AND `./repl-heartbeat` is >90 s stale. `./repl-heartbeat` is REPL-only (NOT touched by headless news scripts) so a news job can't mask a REPL hang. See `memory/project_hybrid_sidecar.md`.
+
+All signals must pass for the bot to be considered healthy. Never skip heartbeat updates — they're cheap insurance.
 
 ## Ongoing
 
