@@ -63,6 +63,22 @@ The plugin's `server.ts` exists in two locations and the REAL running path flips
 
 6. If all required markers OK AND version unchanged — update `./state.json` → `last_plugin_version = <current>` (idempotent) and continue to step 1.
 
+### 0.55. Verify pm2-logrotate
+
+PM2 itself does not rotate logs by default — without rotation `telegram-klavdiy-out.log` grows unbounded (we saw 338 MB / 12 h before installing the module on 2026-05-20). On every startup:
+
+1. `pm2 list 2>/dev/null | grep -E "pm2-logrotate"` — expect one row, status `online`.
+2. If missing → install + configure (one-time recovery):
+   ```bash
+   pm2 install pm2-logrotate
+   pm2 set pm2-logrotate:max_size 20M
+   pm2 set pm2-logrotate:retain 7
+   pm2 set pm2-logrotate:compress true
+   pm2 set pm2-logrotate:workerInterval 30
+   pm2 save
+   ```
+3. Sanity-check: `ls -lh ~/.pm2/logs/telegram-klavdiy-out.log` should be <100 MB. If larger — logrotate misconfigured; write `restart_note.md` and DM admin (any hour — disk-eating bug is fresh breakage).
+
 ### 0.6. Verify sidecar (safety-net)
 
 The safety-net sidecar runs under launchd (`com.dioteos.klavdiy.sidecar`) and answers inbound Telegram messages when the REPL hangs. On every startup:
