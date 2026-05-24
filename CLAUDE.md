@@ -6,6 +6,8 @@ Always-on Claude Code bot for Telegram. Powered by PM2 + Claude Channels.
 
 Execute this startup procedure in strict order.
 
+**Heartbeat during startup:** Run `touch ./repl-heartbeat` as the very first action (before Step 0), and again after each numbered step completes. Startup takes 3-5 minutes; without periodic touches the sidecar sees a stale heartbeat and fires false fallbacks for any message that arrives mid-startup.
+
 ### 0. Wait for Telegram plugin
 
 The Telegram plugin loads asynchronously — it may not be ready when Claude starts.
@@ -155,20 +157,17 @@ If the file doesn't exist — skip this step (normal cold start).
 
 ## Heartbeat
 
-A watchdog process monitors this bot's health via two independent signals:
+Three independent signals, three owners — no single point can both fail and mask the failure:
 
-1. **Heartbeat freshness** — `./heartbeat` file mtime. You **must** keep it fresh:
-   - Run `touch ./heartbeat ./repl-heartbeat` immediately after completing Step 5 (startup summary)
-   - Run `touch ./heartbeat ./repl-heartbeat` after processing each Telegram message
-   - Run `touch ./heartbeat ./repl-heartbeat` after executing each cron task
+1. **Machine liveness — `./heartbeat`** — touched every 120 s by launchd agent `com.dioteos.klavdiy.heartbeat` (script: `./scripts/touch-machine-heartbeat.sh`). The REPL must NOT touch this file — keeping it owned by launchd is what lets a long Opus "Pondering" run without triggering a spurious pm2 restart. Watchdog restarts the bot if this file is older than 15 minutes (5-min grace post-restart). Stale here means launchd / the Mac itself is wedged, not just the REPL.
 
-   If the file is older than 15 minutes, watchdog restarts the bot (5-min grace period post-restart).
+2. **REPL liveness — `./repl-heartbeat`** — touched by the REPL after each cron fire, after each Telegram message reply, and by the every-8-min keepalive task. Headless news scripts must NOT touch it (a news job hanging must not mask a REPL hang). Two consumers, two thresholds:
+   - **Sidecar** (soft): >90 s stale + inbound message unacked → fire `claude -p` fallback reply. Session stays alive.
+   - **Watchdog** (hard): >10 min stale → `pm2 restart`. Catches REPL hangs the sidecar can't fix.
 
-2. **MCP plugin liveness** — watchdog also checks that the bot's claude has a live `bun run --cwd .../telegram/...` child process. If that subprocess dies mid-session (a recurring bug — see `memory/project_session_hanging.md`), the REPL can still SEND via curl fallback but cannot RECEIVE `getUpdates` → bot is silently deaf. Watchdog catches this within 2 minutes and restarts. Heartbeat alone misses it because the keepalive cron keeps touching the file.
+3. **MCP plugin liveness** — watchdog checks that the bot's claude has a live `bun run --cwd .../telegram/...` child process. If the subprocess dies mid-session (recurring bug — see `memory/project_session_hanging.md`), the REPL can still SEND via curl fallback but cannot RECEIVE `getUpdates` → bot is silently deaf. Watchdog catches this within 2 minutes and restarts.
 
-3. **Sidecar safety-net (launchd)** — separate `com.dioteos.klavdiy.sidecar` agent polls `./inbox/` and fires a headless `claude -p` fallback reply when an inbound has sat >60 s without ack AND `./repl-heartbeat` is >90 s stale. `./repl-heartbeat` is REPL-only (NOT touched by headless news scripts) so a news job can't mask a REPL hang. See `memory/project_hybrid_sidecar.md`.
-
-All signals must pass for the bot to be considered healthy. Never skip heartbeat updates — they're cheap insurance.
+The split was introduced 2026-05-23: previously the REPL touched `./heartbeat` too, which meant any long Opus thinking → socket-closed → REPL hang → watchdog restart cascade. After decoupling, only true breakage (MCP subprocess dead, Mac wedged, REPL hung >10 min) restarts pm2. Short REPL hangs (<10 min) are caught by the sidecar with fallback replies — no restart needed.
 
 ## Ongoing
 

@@ -64,8 +64,17 @@ PROMPT="$(printf '%s\n%s\n' "$TEMPLATE_FILLED" "$TEXT")"
   echo
 } >> "$LOG_FILE"
 
-# Serialize against news pipeline — same mkdir-based lock all headless wrappers use.
-# macOS has no flock(1); mkdir is atomic and portable.
+GRACE_SEC=15
+CMD_PID=""
+WD_PID=""
+
+cleanup() {
+  [ -n "$CMD_PID" ] && kill -9 "$CMD_PID" 2>/dev/null || true
+  [ -n "$WD_PID" ] && kill "$WD_PID" 2>/dev/null || true
+  rmdir "$LOCK_DIR" 2>/dev/null || true
+}
+trap cleanup EXIT
+
 waited=0
 until mkdir "$LOCK_DIR" 2>/dev/null; do
   sleep 1
@@ -75,16 +84,27 @@ until mkdir "$LOCK_DIR" 2>/dev/null; do
     exit 9
   fi
 done
-trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
 
 EXIT_CODE=0
 cd /tmp
-perl -e 'alarm shift; exec @ARGV' "$TIMEOUT_SEC" \
-  claude -p "$PROMPT" \
-    --add-dir "$BOT_DIR" \
-    --dangerously-skip-permissions \
-    --output-format text \
-  >> "$LOG_FILE" 2>&1 || EXIT_CODE=$?
+claude -p "$PROMPT" \
+  --strict-mcp-config --mcp-config '{"mcpServers":{}}' \
+  --add-dir "$BOT_DIR" \
+  --dangerously-skip-permissions \
+  --output-format text \
+  >> "$LOG_FILE" 2>&1 &
+CMD_PID=$!
+
+( sleep "$TIMEOUT_SEC"; kill -TERM $CMD_PID 2>/dev/null; sleep $GRACE_SEC; kill -9 $CMD_PID 2>/dev/null ) &
+WD_PID=$!
+
+EXIT_CODE=0
+wait $CMD_PID 2>/dev/null || EXIT_CODE=$?
+
+kill $WD_PID 2>/dev/null || true
+wait $WD_PID 2>/dev/null || true
+CMD_PID=""
+WD_PID=""
 
 {
   echo

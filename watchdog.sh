@@ -10,6 +10,8 @@ PROCESS_NAME="telegram-klavdiy"
 CHECK_INTERVAL=120       # seconds between checks
 GRACE_PERIOD=300         # seconds after restart before checking heartbeat
 HEARTBEAT_MAX_AGE=900    # seconds (15 min) — heartbeat older than this = stale
+REPL_HB_FILE="$BOT_DIR/repl-heartbeat"
+REPL_HB_MAX_AGE=600     # seconds (10 min) — REPL heartbeat older than this = REPL hung
 COOLDOWN=600             # seconds — minimum time between watchdog-triggered restarts
 EXTENDED_COOLDOWN=1800   # seconds — used after escalation to silence spam (30 min)
 ESCALATION_THRESHOLD=3   # consecutive restarts without heartbeat recovery → admin escalation
@@ -194,7 +196,20 @@ print(procs[0]['pm2_env']['status'] if procs else 'missing')
     fi
   fi
 
-  # 4. Check heartbeat file
+  # 4. Check REPL liveness via repl-heartbeat
+  # Catches "REPL hung but MCP subprocess alive" — the gap heartbeat+MCP checks miss.
+  # Keepalive cron touches repl-heartbeat every 8 min; 10 min threshold = no false positives.
+  if [ -f "$REPL_HB_FILE" ]; then
+    repl_mtime=$(stat -f %m "$REPL_HB_FILE" 2>/dev/null || echo 0)
+    now_repl=$(date +%s)
+    repl_age=$(( now_repl - repl_mtime ))
+    if [ "$repl_age" -gt "$REPL_HB_MAX_AGE" ]; then
+      do_restart "REPL heartbeat stale (${repl_age}s, max ${REPL_HB_MAX_AGE}s) — REPL hung, MCP alive"
+      continue
+    fi
+  fi
+
+  # 5. Check machine heartbeat file
   if [ ! -f "$HEARTBEAT_FILE" ]; then
     do_restart "no heartbeat file after ${uptime_sec}s uptime"
     continue
@@ -208,7 +223,7 @@ print(procs[0]['pm2_env']['status'] if procs else 'missing')
   if [ "$heartbeat_age" -gt "$HEARTBEAT_MAX_AGE" ]; then
     do_restart "heartbeat stale (${heartbeat_age}s old, max ${HEARTBEAT_MAX_AGE}s)"
   else
-    # Heartbeat is fresh AND we're past grace period → bot looks healthy
+    # Both heartbeats fresh AND we're past grace period → bot looks healthy
     reset_counter_on_recovery
   fi
 done
