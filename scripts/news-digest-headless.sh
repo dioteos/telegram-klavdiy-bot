@@ -24,7 +24,10 @@ DATE="$(date +%Y-%m-%d)"
 LOG_FILE="$BOT_DIR/logs/headless-digest-$STAGE-$DATE.log"
 TASK_FILE="$BOT_DIR/tasks/news-digest-$STAGE.md"
 PROMPT_TEMPLATE="$BOT_DIR/scripts/headless-prompts/news-digest-$STAGE.txt"
-TIMEOUT_SEC=900
+case "$STAGE" in
+  prenotify) TIMEOUT_SEC=900  ;;  # 15 min — prenotify is lightweight
+  publish)   TIMEOUT_SEC=1800 ;;  # 30 min — publish does formatting + dedup + catchup WebSearch
+esac
 
 mkdir -p "$BOT_DIR/logs"
 
