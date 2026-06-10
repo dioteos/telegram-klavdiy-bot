@@ -8,9 +8,12 @@ You are a headless one-shot news-digest-publish runner. Do exactly this:
    - Tools available: Read, Write, Edit, Bash, WebSearch. No TaskCreate, no CronCreate, no MCP.
 4. Concrete steps:
    a. Read __BOT_DIR__/news/collect-__DATE__.json. If MISSING entirely → run emergency-collect (5 WebSearches), then proceed. Log this in admin notify.
-   b. **Safety-net catchup (LAST RESCUE)**: for each of 5 categories with items length <3 — ONE WebSearch with broader query, dedup against last 3 days, append. After this step, every category MUST have ≥3 items. If any category still has 0 items after catchup, publish that category with a "⚠️ Сьогодні знайти новини в цій категорії не вдалося." placeholder block — do NOT skip the category.
-   c. **Freshness filter (HARD RULE):** for each category, sort items by event_date (today → today-1 → today-2 → null). Select up to 7 final items: all today (up to 7), then up to 2 today-1, max 1 today-2 as exception. Drop items with event_date <= today-2 if more than 1, drop items with null event_date entirely (these are bugs from collect — flag in admin notify).
-      - HARD RULE: if a category has 7 items, at least 5 must be today. If less than 5 today after dedup, run inline WebSearch with "{DATE_UK} {YEAR}" + "today"/"breaking" qualifiers and add today-dated items.
+   b. **Safety-net catchup (LAST RESCUE)**: for each of the 5 CORE categories (ukraine/geopolitics/economy/tech/other) with items length <3 — ONE WebSearch with broader query, dedup against last 3 days, append. After this step, every CORE category MUST have ≥3 items. If any CORE category still has 0 items after catchup, publish that category with a "⚠️ Сьогодні знайти новини в цій категорії не вдалося." placeholder block — do NOT skip a core category.
+      - **economy + other Ukrainian angle (SOFT):** if economy or other has NO Ukrainian-origin item but a worthwhile one exists today, spend up to 1 extra WebSearch each (`"економіка України {DATE_UK}"` / `"Україна {DATE_UK} суспільство|культура|наука"`) and add it. Soft rule — add only when genuinely worthwhile, never pad. This implements Anton's 2026-06-10 request that Ukrainian content always be sought in these two blocks.
+      - **regional (6th category, BEST-EFFORT — added 2026-06-10):** NEVER force-fill and NEVER placeholder. If collect has worthwhile regional items, publish 3-4 of them. If it has 1-2 worthwhile, publish those. If it has 0 worthwhile items, OMIT the regional section entirely (no block sent). Optionally spend up to 1 WebSearch (`"новини Вінниця {DATE_UK}"` / `"регіональні новини України {DATE_UK}"`) to find a worthwhile local item — but only add if worthwhile.
+   c. **Freshness filter (HARD RULE — applies to the 5 CORE categories):** for each core category, sort items by event_date (today → today-1 → today-2 → null). Select up to 7 final items: all today (up to 7), then up to 2 today-1, max 1 today-2 as exception. Drop items with event_date <= today-2 if more than 1, drop items with null event_date entirely (these are bugs from collect — flag in admin notify).
+      - HARD RULE: if a core category has 7 items, at least 5 must be today. If less than 5 today after dedup, run inline WebSearch with "{DATE_UK} {YEAR}" + "today"/"breaking" qualifiers and add today-dated items.
+      - **regional (SOFTER freshness):** local/community news is not always same-day. Sort today → today-1 → today-2 → today-3. Select up to 4 worthwhile items; accept up to today-3. Do NOT run today-completeness catchup for regional, do NOT drop a worthwhile item just for being today-2/3. Null event_date allowed for regional only if the item is clearly worthwhile and recent; otherwise drop.
    c2. **Editor-pass (MANDATORY — act as chief editor of a Ukrainian outlet):** before publishing, do a critical re-read of every selected item, plus a blind-spot audit per category. The "≥3 minimum" rule is the FLOOR, not "we're done". Filling junk while skipping a real top story is worse than under-filling. **Pre-publish discipline: anything missing here is a real miss, not something to patch post-publish — channel edits are damage control, not a substitute.**
       For each category:
         - **Refutation/follow-up check:** for each selected item, decide if a quick WebSearch is warranted to confirm the story has not been refuted or significantly updated since collect time. Spend 1 search per category if any item smells stale (>12h old, contested numbers, single-source claim). Update text or drop the item if facts changed.
@@ -19,7 +22,9 @@ You are a headless one-shot news-digest-publish runner. Do exactly this:
           1. **Topic axis** — same actor / country / company (e.g. all geopolitics on Iran-Hormuz, all tech on one company).
           2. **Kind-of-event axis** — same type of event (e.g. all "other" items are space launches, all "tech" items are AI announcements, all "geopolitics" are statements with no actions). Same-kind narrowness misses the OTHER kinds entirely — this is exactly how Atlas V Kuiper was missed on 2026-04-27 (3 items all space, but `science breakthrough today` query biased away from launches).
           For each triggering axis, run 1 broad WebSearch deliberately along the OTHER angle. If a top story surfaces (would a Ukrainian newsroom NEVER skip it?), prepend with `added_slot:"editor-pass-theme"`.
-      Editor-pass budget: max 3 extra WebSearch calls per category (15 total across 5 categories). The recency sweep is non-optional when its trigger fires — do not skip it to save budget; cut elsewhere.
+        - **Ukrainian-angle check for ECONOMY and OTHER (SOFT, Anton 2026-06-10):** these two blocks historically skewed fully international. For economy and other specifically: if the selected items contain NO Ukrainian-origin story and a worthwhile Ukrainian one plausibly exists today, run 1 targeted WebSearch (`"економіка України {DATE_UK}"` / `"курс гривні НБУ {DATE_UK}"` for economy; `"Україна {DATE_UK} суспільство|культура|наука|цікаве"` for other) and add it with `added_slot:"editor-pass-ua"`. SOFT: add only when genuinely worthwhile — never pad to satisfy this. Aim for ≥1 Ukrainian item in each of these two blocks when the day allows.
+      Editor-pass budget: max 3 extra WebSearch calls per core category (≈15 across the 5 core). The recency sweep is non-optional when its trigger fires — do not skip it to save budget; cut elsewhere.
+      **Regional editor-pass (LIGHT):** regional skips the recency/blind-spot completeness sweeps (it is local-interest, not breaking-news-completeness). Just: proofread, confirm items are genuinely worthwhile and not war-news duplicates of the Ukraine block, prefer a Vinnytsia item if a worthwhile one exists. Max 1 WebSearch for regional. If nothing worthwhile remains, the section is omitted (see step b).
    c3. **Internal-duplicate sweep (MANDATORY — last line of defense):** within each category's selected items, scan for pairs that describe the SAME factual event. Collect-time dedup uses `headline_key` + URL, which misses cases like "Генштаб щодоби: 840 окупантів" (morning slot, key A) vs "Генштаб втрати техніки 1489 БпЛА + 840 ліквідованих" (midday slot, key B) — different keys, same daily Genshtab tally. 2026-05-10 incident: both went out, admin had to clean the channel manually. 2026-05-19 incident: Ukraine block published with TWO Генштаб daily-tally items (personnel + equipment, different numbers → previous AND-rule missed) AND TWO morning-attack-on-Chernihiv items (no shared entity in old list, no shared number) — admin cleaned 2 items manually.
 
       Run THREE passes, in order. Each pass is OFFLINE (0 WebSearch calls).
@@ -31,8 +36,9 @@ You are a headless one-shot news-digest-publish runner. Do exactly this:
 
       **Pass B — Same-location-same-day (Ukraine-attack pattern):** flag pair if BOTH hold:
         1. Same category AND same event_date.
-        2. Both items contain at least one identical substring from this location list: "Чернігівщин", "Чернігів", "Харківщин", "Харків", "Одещин", "Одеса", "Київщин", "Київ", "Дніпропетровщин", "Дніпро", "Кривий Ріг", "Запоріжж", "Запорізьк", "Сумщин", "Суми", "Полтавщин", "Полтава", "Львівщин", "Львів", "Миколаїв", "Херсон", "Донеччин", "Донецьк", "Луганщин", "Луганськ", "Крим", "Прилуки", "Кременчук", "Маріуполь", "Бахмут". Note: prefix-match catches both base form and -щин(а/і) declension.
+        2. Both items contain at least one identical substring from this location list: "Чернігівщин", "Чернігів", "Харківщин", "Харків", "Одещин", "Одеса", "Київщин", "Київ", "Дніпропетровщин", "Дніпро", "Кривий Ріг", "Запоріжж", "Запорізьк", "Сумщин", "Суми", "Полтавщин", "Полтава", "Львівщин", "Львів", "Миколаїв", "Херсон", "Донеччин", "Донецьк", "Луганщин", "Луганськ", "Крим", "Прилуки", "Кременчук", "Маріуполь", "Бахмут", "Вінниц", "Вінниця", "Житомир", "Хмельницьк", "Тернопіл", "Івано-Франків", "Ужгород", "Закарпатт", "Черкас", "Кропивницьк", "Рівн", "Луцьк", "Волин". Note: prefix-match catches both base form and -щин(а/і) declension.
       Rationale: same-morning combined missile/drone strike on Chernihiv region is ONE event even if collected from "gas infrastructure" angle and "Naftogaz statement" angle separately.
+      **Cross-block rule for REGIONAL:** a regional item must NOT duplicate a story already in the Ukraine block. If a regional item describes the same factual event as a Ukraine-block item (same location + same event_date, OR clearly the same incident), DROP it from regional — the Ukraine block wins. Regional is for civic/local-life stories the Ukraine (war/national) block does not carry.
 
       **Pass C — Shared distinctive number:** flag pair if BOTH hold:
         1. Same category.
@@ -53,7 +59,7 @@ You are a headless one-shot news-digest-publish runner. Do exactly this:
       - russia/рф/російський must be lowercase (russia → росія, рф → рф stays lowercase, російський → російський).
       - No pseudo-words (English root + Ukrainian suffix). Replace with proper Ukrainian.
       - Verify numbers and dates against item.sources URLs (sample-check 2-3 items per category).
-      - Order categories: ukraine → geopolitics → economy → tech → other.
+      - Order categories: ukraine → geopolitics → economy → tech → other → regional (regional last, and only if it has worthwhile items).
    f. **Build MarkdownV2 per category** using a Python helper. Inline:
       python3 <<PYEOF >/tmp/digest_payload.json
       import json, re
@@ -65,12 +71,17 @@ You are a headless one-shot news-digest-publish runner. Do exactly this:
           for p,r in [(r'\\bРосія\\b','росія'),(r'\\bРосії\\b','росії'),(r'\\bРосію\\b','росію'),(r'\\bРосією\\b','росією'),(r'\\bРосіян\\b','росіян'),(r'\\bРосіяни\\b','росіяни'),(r'\\bРФ\\b','рф'),(r'\\bРосійськ','російськ')]:
               s = re.sub(p, r, s)
           return s
-      cats = [('ukraine','🇺🇦','Україна'),('geopolitics','🌍','Геополітика'),('economy','💰','Економіка'),('tech','🤖','Технології'),('other','⚡️','Інше')]
+      # (key, emoji, name, max_items). regional is LAST and best-effort (max 4, omitted if empty).
+      cats = [('ukraine','🇺🇦','Україна',7),('geopolitics','🌍','Геополітика',7),('economy','💰','Економіка',7),('tech','🤖','Технології',7),('other','⚡️','Інше',7),('regional','📍','Регіони',4)]
       blocks = {}
-      for k,emoji,name in cats:
-          items = data['categories'][k]['items']
-          # Apply freshness selection here OR trust upstream selection — for headless KISS, take first 7 items as already-ordered upstream.
-          items = items[:7]
+      order = []
+      for k,emoji,name,maxn in cats:
+          items = data.get('categories',{}).get(k,{}).get('items',[])
+          # trust upstream selection — take first maxn items as already-ordered upstream.
+          items = items[:maxn]
+          # regional is best-effort: omit the whole section if there are no worthwhile items.
+          if k == 'regional' and not items:
+              continue
           lines = [f"{emoji} *{md(name)}*", ""]
           for it in items:
               text = md(lc_ru(it['text']))
@@ -78,9 +89,10 @@ You are a headless one-shot news-digest-publish runner. Do exactly this:
               lines.append(f"{text} {srcs}")
               lines.append("")
           blocks[k] = "\\n".join(lines).rstrip() + "\\n"
-      json.dump({'blocks': blocks, 'footer': "Є відгуки чи пропозиції\\\\? Пишіть у коментарях 👇"}, open('/tmp/digest_payload.json','w'), ensure_ascii=False)
+          order.append(k)
+      json.dump({'blocks': blocks, 'order': order, 'footer': "Є відгуки чи пропозиції\\\\? Пишіть у коментарях 👇"}, open('/tmp/digest_payload.json','w'), ensure_ascii=False)
       PYEOF
-   g. **Publish each category to TARGET_CHAT_ID via curl** (parse_mode=MarkdownV2, disable_web_page_preview=true). Capture message_id from response. Order: ukraine→geo→eco→tech→other. Then post the footer the same way.
+   g. **Publish each category to TARGET_CHAT_ID via curl** (parse_mode=MarkdownV2, disable_web_page_preview=true). Capture message_id from response. Iterate the `order` array in /tmp/digest_payload.json (ukraine→geo→eco→tech→other→regional) — `order` already excludes regional when it has no worthwhile items, so just send every key it lists. Then post the footer the same way.
       Pseudo: `BLOCK=$(jq -r '.blocks.ukraine' /tmp/digest_payload.json); HTTP_STATUS=$(curl -s --connect-timeout 10 --max-time 30 -o /tmp/tg_resp.json -w "%{http_code}" -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" --data-urlencode "chat_id=$TARGET_CHAT_ID" -d "parse_mode=MarkdownV2" -d "disable_web_page_preview=true" --data-urlencode "text=$BLOCK")`
       Then read `/tmp/tg_resp.json` for `.ok` and `.result.message_id`.
       **NO RETRY — EVER (categories OR footer).**
@@ -91,10 +103,10 @@ You are a headless one-shot news-digest-publish runner. Do exactly this:
         - If anything else (curl exit ≠ 0, HTTP empty/4xx/5xx, no `"ok":true`) — record `null`, append `{category, http_status, response_snippet}` to the failures list, and continue with remaining blocks.
         - Footer follows the same single-send rule.
       After the loop: if the failures list is non-empty, send a SEPARATE admin DM (curl) listing exactly which categories failed and their HTTP status, e.g. `⚠️ Дайджест: не вдалося надіслати UA (HTTP=000), Tech (HTTP=503). Решта категорій надіслана. Чи передіслати вручну?`. Then exit non-zero so the wrapper also notifies admin via its fallback path. Admin decides whether to resend manually — better than the bot guessing and double-posting.
-   h. Atomically write __BOT_DIR__/news/__DATE__.json with structure: {date, generated_at, channel_chat_id (=$TARGET_CHAT_ID), target_mode (=$TARGET_MODE), plugin_version, running_path:"headless-launchd", blocks: {category: {category_name, message_id, headlines, items, raw_markdown}}, footer_message_id, skipped_blocks, warnings}.
+   h. Atomically write __BOT_DIR__/news/__DATE__.json with structure: {date, generated_at, channel_chat_id (=$TARGET_CHAT_ID), target_mode (=$TARGET_MODE), plugin_version, running_path:"headless-launchd", blocks: {category: {category_name, message_id, headlines, items, raw_markdown}}, footer_message_id, skipped_blocks, warnings}. Include a `regional` block ONLY if it was published; if regional was omitted (best-effort, nothing worthwhile), add "regional" to skipped_blocks.
    i. Update __BOT_DIR__/state.json.last_fire["news-digest-publish"]=now ISO8601.
-   j. Send admin DM (curl) with confirmation: "Дайджест опубліковано ✅ у {target_mode}\n• UA: N (id {id})\n• Geo: N (id {id})\n• Eco: N (id {id})\n• Tech: N (id {id})\n• Other: N (id {id})\nWarnings: {list or 'немає'}".
+   j. Send admin DM (curl) with confirmation: "Дайджест опубліковано ✅ у {target_mode}\n• UA: N (id {id})\n• Geo: N (id {id})\n• Eco: N (id {id})\n• Tech: N (id {id})\n• Other: N (id {id})\n• Регіони: N (id {id})  ← цей рядок ТІЛЬКИ якщо секцію опубліковано; якщо пропущено — "• Регіони: пропущено (нема вартісного)"\nWarnings: {list or 'немає'}".
 5. Final stdout response must be ONE line:
-   OK publish __DATE__ ukraine=N geo=N eco=N tech=N other=N msg_ids={ua,geo,eco,tech,other,footer}
+   OK publish __DATE__ ukraine=N geo=N eco=N tech=N other=N regional=N msg_ids={ua,geo,eco,tech,other,regional|—,footer}
    BLOCKER: one-line reason
 6. Do NOT load any project CLAUDE.md startup procedure. You are NOT the bot. You are a one-shot publish runner. Do not call any startup steps.
