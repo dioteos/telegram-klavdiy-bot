@@ -35,6 +35,18 @@ for dir in "$HOME/.local/bin" "$HOME/.bun/bin" "$HOME/.nvm/versions/node/"*/bin 
 done
 export PATH
 
+# Strip inherited Claude Code session env. If any CLAUDE_CODE_SESSION_* vars leak
+# in (e.g. launchd agent bootstrapped from inside a Claude session, or a polluted
+# gui-domain env), the spawned `claude -p` thinks it is a CHILD session and
+# authenticates via the short-lived CLAUDE_CODE_SESSION_ACCESS_TOKEN — which goes
+# stale within hours — instead of the long-lived OAuth in ~/.claude/.credentials.json.
+# Result: "API Error: 401 Invalid authentication credentials". This is the same
+# fix start.sh applies for the REPL. (Root cause of the 2026-06-20 headless outage:
+# morning collect worked on a still-fresh token, midday 401'd after it expired.)
+unset CLAUDE_CODE_SESSION_ACCESS_TOKEN CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_SESSION_ID \
+      CLAUDECODE CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_EXECPATH AI_AGENT CLAUDE_EFFORT \
+      CLAUDE_CODE_SSE_PORT ANTHROPIC_API_KEY 2>/dev/null || true
+
 if ! command -v claude >/dev/null 2>&1; then
   echo "$(date -Iseconds) ERROR: claude not in PATH ($PATH)" | tee -a "$LOG_FILE" >&2
   exit 3

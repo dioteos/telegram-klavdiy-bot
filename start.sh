@@ -5,6 +5,27 @@ set -euo pipefail
 export HOME="${HOME:-$(eval echo ~"$(whoami)")}"
 export TERM="${TERM:-xterm-256color}"
 
+# Strip inherited Claude Code session env. If start.sh is launched from INSIDE a
+# Claude session (interactive `pm2 start/restart`, or a `pm2 resurrect` whose
+# dump.pm2 was saved from such a session), these vars make the spawned `claude`
+# think it is a CHILD session and authenticate via CLAUDE_CODE_SESSION_ACCESS_TOKEN
+# — which is short-lived and goes stale — instead of the long-lived OAuth creds in
+# ~/.claude. Result: "Please run /login · API Error: 401". The bot must always run
+# as an independent top-level session. (Root cause of the 2026-06-20 outage.)
+unset CLAUDE_CODE_SESSION_ACCESS_TOKEN CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_SESSION_ID \
+      CLAUDECODE CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_EXECPATH AI_AGENT CLAUDE_EFFORT \
+      CLAUDE_CODE_SSE_PORT ANTHROPIC_API_KEY 2>/dev/null || true
+
+# Long-lived OAuth token (from `claude setup-token`, valid ~1 year) so the bot
+# authenticates WITHOUT the macOS Keychain. The Keychain is unreadable when pm2 is
+# boot-resurrected by the LaunchAgent (non-GUI session) — that caused the 2026-06-20
+# 401 outage. CLAUDE_CODE_OAUTH_TOKEN has higher precedence than Keychain creds and
+# bills against the subscription. Stored 0600 outside the repo (never committed).
+# Regenerate before expiry: `claude setup-token` > ~/.claude/.klavdiy-oauth-token
+if [ -r "$HOME/.claude/.klavdiy-oauth-token" ]; then
+  export CLAUDE_CODE_OAUTH_TOKEN="$(tr -d '[:space:]' < "$HOME/.claude/.klavdiy-oauth-token")"
+fi
+
 # Build PATH dynamically — add common tool locations if they exist
 for dir in "$HOME/.local/bin" "$HOME/.bun/bin" "$HOME/.nvm/versions/node/"*/bin /opt/homebrew/bin /usr/local/bin; do
   [ -d "$dir" ] && PATH="$dir:$PATH"
