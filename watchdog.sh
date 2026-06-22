@@ -139,6 +139,21 @@ is_in_cooldown() {
   return 1  # not in cooldown
 }
 
+# A bare `pm2 restart` does NOT reliably clear a 401 / hung --channels session: the
+# old claude/expect/bun tree and the server-side auth state overlap with the new
+# session and the 401 persists (2026-06-22 evening: 3 bare pm2-restarts all 401'd;
+# a full stop → kill orphans → settle → start recovered immediately, identical to the
+# morning manual recovery). So every watchdog restart goes through this clean path.
+clean_restart() {
+  pm2 stop "$PROCESS_NAME" >/dev/null 2>&1 || true
+  pkill -f 'expect -c' 2>/dev/null || true
+  pkill -f 'claude --channels plugin:telegram' 2>/dev/null || true
+  pkill -f 'bun run --cwd.*telegram.*start' 2>/dev/null || true
+  sleep 10
+  pm2 start "$PROCESS_NAME" >/dev/null 2>&1 || pm2 restart "$PROCESS_NAME" >/dev/null 2>&1 || true
+  log "  clean restart done (stop + kill orphans + 10s settle + start)"
+}
+
 do_restart() {
   local reason="$1"
   local is_auth="${2:-0}"   # 1 = auth-failure loop (wide spacing, stop hammering early)
@@ -178,7 +193,7 @@ do_restart() {
   log "RESTARTING (consecutive=$counter, auth=$is_auth) — reason: $reason"
   notify_admin "🐕 Watchdog: перезапускаю бот (#$counter поспіль). Причина: $reason"
   date +%s > "$LAST_RESTART_FILE"
-  pm2 restart "$PROCESS_NAME" 2>&1 | while read -r line; do log "  $line"; done
+  clean_restart
 
   # Escalation for ordinary hangs: louder alert + switch to extended cooldown.
   if [ "$is_auth" != "1" ] && [ "$counter" -ge "$ESCALATION_THRESHOLD" ] && [ ! -f "$ESCALATED_FILE" ]; then
