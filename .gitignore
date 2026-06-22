@@ -1,7 +1,8 @@
 .DS_Store
 config.json
 node_modules/
-.claude/
+.claude/*
+!.claude/settings.json
 
 memory/*.md
 !memory/INSTRUCTIONS.md

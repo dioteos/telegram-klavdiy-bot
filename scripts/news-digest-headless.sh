@@ -51,6 +51,15 @@ unset CLAUDE_CODE_SESSION_ACCESS_TOKEN CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_SES
       CLAUDECODE CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_EXECPATH AI_AGENT CLAUDE_EFFORT \
       CLAUDE_CODE_SSE_PORT ANTHROPIC_API_KEY 2>/dev/null || true
 
+# Load long-lived OAuth token (same as start.sh:25-26 does for the REPL). Stripping the
+# session env above is NOT enough: under launchd (non-GUI) the macOS Keychain is unreadable,
+# so credentials.json OAuth refresh 401s. CLAUDE_CODE_OAUTH_TOKEN has higher precedence than
+# Keychain creds and needs no GUI session. Without this, every headless run 401s once the
+# inherited session token is stripped — root cause of the 2026-06-20 evening digest outage.
+if [ -r "$HOME/.claude/.klavdiy-oauth-token" ]; then
+  export CLAUDE_CODE_OAUTH_TOKEN="$(tr -d '[:space:]' < "$HOME/.claude/.klavdiy-oauth-token")"
+fi
+
 if ! command -v claude >/dev/null 2>&1; then
   echo "$(date -Iseconds) ERROR: claude not in PATH ($PATH)" | tee -a "$LOG_FILE" >&2
   exit 3

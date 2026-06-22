@@ -59,7 +59,9 @@ sleep 1
 # Timeout = 23 hours — safety net for hung sessions.
 # PM2 cron_restart at 4 AM / 4 PM gives a fresh session twice daily;
 # this catches sessions that hang and never exit on their own.
-exec expect -c '
+# NOTE: not `exec` — we need to run code AFTER the session exits (the backoff below).
+SESSION_START=$(date +%s)
+expect -c '
 set timeout 82800
 spawn claude --channels plugin:telegram@claude-plugins-official --dangerously-skip-permissions "Execute the Startup procedure defined in CLAUDE.md. Follow all 6 steps in order."
 expect {
@@ -67,3 +69,17 @@ expect {
     eof
 }
 '
+EXIT_CODE=$?
+SESSION_DUR=$(( $(date +%s) - SESSION_START ))
+
+# Crash/auth-loop throttle (root cause of the 2026-06-22 3h outage): when claude
+# exits almost immediately (e.g. a transient "401 / Please run /login" on startup),
+# PM2 relaunches instantly and the rapid repeated session creation SUSTAINS the 401.
+# Sleeping before exit guarantees a floor on the relaunch interval so a transient can
+# clear instead of spinning. Pairs with PM2 exp_backoff_restart_delay + the watchdog's
+# auth-loop detector. A healthy long-lived session skips this entirely.
+if [ "$SESSION_DUR" -lt 60 ]; then
+  echo "[start.sh] session exited after ${SESSION_DUR}s (code ${EXIT_CODE}) — backing off 60s to throttle restart loop"
+  sleep 60
+fi
+exit "$EXIT_CODE"

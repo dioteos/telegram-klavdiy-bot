@@ -19,6 +19,17 @@ LAST_RESTART_FILE="$BOT_DIR/.watchdog_last_restart"
 COUNTER_FILE="$BOT_DIR/.watchdog_consecutive_restarts"
 ESCALATED_FILE="$BOT_DIR/.watchdog_escalated"
 
+# Auth-failure loop handling (added after the 2026-06-22 outage).
+# A transient 401 / "Please run /login" turns into a multi-hour outage when the bot
+# is restarted blindly: rapid repeated session creation on a shared inference-only
+# OAuth token never clears the condition — it SUSTAINS it. So when we see auth
+# errors in the bot log we space restarts far apart and stop hammering quickly,
+# letting a transient clear on its own (pm2 + start.sh keep spaced-retrying) and
+# alerting the admin loudly for a persistent one.
+BOT_OUT_LOG="$HOME/.pm2/logs/telegram-klavdiy-out.log"
+AUTH_FAIL_COOLDOWN=900   # seconds (15 min) — wide spacing between auth-loop restarts
+AUTH_FAIL_THRESHOLD=2    # auth-loop restarts before we STOP restarting and just alert
+
 # Telegram notification config
 TELEGRAM_ENV_FILE="$HOME/.claude/channels/telegram/.env"
 ADMIN_CHAT_ID="$(python3 -c "import json; print(json.load(open('$BOT_DIR/config.json'))['admin_chat_id'])" 2>/dev/null || echo "")"
@@ -77,6 +88,20 @@ print(procs[0]['pm2_env']['pm_uptime'] if procs else 0)
   fi
 }
 
+# Detect a FRESH auth-failure loop in the bot log. These are not fixed by restarts
+# (the restart-storm itself sustains the 401). Returns 0 if 401/"Please run /login"
+# was logged recently (log written within the last ~4 min so we don't act on stale
+# errors that already recovered).
+auth_failure_recent() {
+  [ -f "$BOT_OUT_LOG" ] || return 1
+  local lmtime now
+  lmtime=$(stat -f %m "$BOT_OUT_LOG" 2>/dev/null || echo 0)
+  now=$(date +%s)
+  (( now - lmtime > 240 )) && return 1
+  tail -c 20000 "$BOT_OUT_LOG" 2>/dev/null \
+    | grep -qE '401 Invalid authentication|Please run /login'
+}
+
 read_counter() {
   if [ -f "$COUNTER_FILE" ]; then
     cat "$COUNTER_FILE"
@@ -116,23 +141,47 @@ is_in_cooldown() {
 
 do_restart() {
   local reason="$1"
-  if is_in_cooldown; then
-    log "SKIP restart (cooldown active) — reason: $reason"
-    notify_admin "🐕 Watchdog: рестарт пропущено (cooldown). Причина: $reason"
-    return
+  local is_auth="${2:-0}"   # 1 = auth-failure loop (wide spacing, stop hammering early)
+
+  # Per-severity cooldown: auth loops get a much wider window since rapid restarts
+  # don't fix a 401 and only sustain it.
+  local cd
+  if [ "$is_auth" = "1" ]; then cd="$AUTH_FAIL_COOLDOWN"; else cd="$(current_cooldown)"; fi
+  if [ -f "$LAST_RESTART_FILE" ]; then
+    local last now
+    last=$(cat "$LAST_RESTART_FILE"); now=$(date +%s)
+    if (( now - last < cd )); then
+      log "SKIP restart (cooldown ${cd}s active) — reason: $reason"
+      [ "$is_auth" = "1" ] || notify_admin "🐕 Watchdog: рестарт пропущено (cooldown). Причина: $reason"
+      return
+    fi
   fi
+
   local counter
   counter=$(read_counter)
+
+  # Auth loop past threshold: STOP restarting (futile) — alert once, then sit quiet.
+  # pm2 + start.sh keep spaced-retrying in the background; a transient clears on its
+  # own and reset_counter_on_recovery() lifts this state when the heartbeat returns.
+  if [ "$is_auth" = "1" ] && [ "$counter" -ge "$AUTH_FAIL_THRESHOLD" ]; then
+    if [ ! -f "$ESCALATED_FILE" ]; then
+      touch "$ESCALATED_FILE"
+      notify_admin "🚨 Watchdog: бот у циклі 401 / «Please run /login» ($counter спроб). Рестарти не лікують 401 — припиняю штурм. Перевір токен ~/.claude/.klavdiy-oauth-token (онови через 'claude setup-token') та 'pm2 logs telegram-klavdiy'. Якщо транзієнт — мине саме; ручний фікс: stop watchdog+бот, kill orphans, один чистий рестарт."
+    else
+      log "auth-loop persists ($counter) — staying in backoff, NOT restarting. $reason"
+    fi
+    return
+  fi
+
   counter=$((counter + 1))
   write_counter "$counter"
-  log "RESTARTING (consecutive=$counter) — reason: $reason"
+  log "RESTARTING (consecutive=$counter, auth=$is_auth) — reason: $reason"
   notify_admin "🐕 Watchdog: перезапускаю бот (#$counter поспіль). Причина: $reason"
   date +%s > "$LAST_RESTART_FILE"
   pm2 restart "$PROCESS_NAME" 2>&1 | while read -r line; do log "  $line"; done
 
-  # Escalation: if multiple consecutive restarts without heartbeat recovery,
-  # send admin a louder alert and switch to extended cooldown.
-  if [ "$counter" -ge "$ESCALATION_THRESHOLD" ] && [ ! -f "$ESCALATED_FILE" ]; then
+  # Escalation for ordinary hangs: louder alert + switch to extended cooldown.
+  if [ "$is_auth" != "1" ] && [ "$counter" -ge "$ESCALATION_THRESHOLD" ] && [ ! -f "$ESCALATED_FILE" ]; then
     touch "$ESCALATED_FILE"
     notify_admin "🚨 Watchdog ескалація: $counter рестартів поспіль не повертають здоровʼя. Можливо потрібне ручне втручання. Cooldown → ${EXTENDED_COOLDOWN}s. Перевір 'pm2 logs telegram-klavdiy' і Telegram MCP plugin."
   fi
@@ -174,6 +223,16 @@ print(procs[0]['pm2_env']['status'] if procs else 'missing')
   # 2. Get uptime — skip check during grace period
   uptime_sec=$(get_uptime_seconds)
   if [ "$uptime_sec" -lt "$GRACE_PERIOD" ]; then
+    continue
+  fi
+
+  # 2.5 Auth-failure loop short-circuit (2026-06-22 outage class).
+  # If the bot log shows fresh 401 / "Please run /login", the REPL can't authenticate.
+  # Blind rapid restarts SUSTAIN this rather than fix it, so handle it here — wide
+  # spacing + early stop + loud alert — before the MCP/heartbeat branches (which would
+  # otherwise fire ordinary rapid restarts and feed the storm).
+  if auth_failure_recent; then
+    do_restart "auth-failure loop — fresh 401 / «Please run /login» in bot log (restarts don't fix this)" 1
     continue
   fi
 
