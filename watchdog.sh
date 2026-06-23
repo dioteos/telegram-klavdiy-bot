@@ -27,8 +27,12 @@ ESCALATED_FILE="$BOT_DIR/.watchdog_escalated"
 # letting a transient clear on its own (pm2 + start.sh keep spaced-retrying) and
 # alerting the admin loudly for a persistent one.
 BOT_OUT_LOG="$HOME/.pm2/logs/telegram-klavdiy-out.log"
-AUTH_FAIL_COOLDOWN=900   # seconds (15 min) — wide spacing between auth-loop restarts
-AUTH_FAIL_THRESHOLD=2    # auth-loop restarts before we STOP restarting and just alert
+AUTH_FAIL_COOLDOWN=240   # seconds (4 min) — upstream 401 windows are short (2-5 min); a
+                         # 15-min cooldown left zombie startup-401 sessions sitting idle far
+                         # longer than the outage itself (2026-06-23 06:05 event). 4 min lands
+                         # the retry after the window typically closes. STOP-after-N below
+                         # still prevents a true storm.
+AUTH_FAIL_THRESHOLD=3    # auth-loop restarts before we STOP restarting and just alert
 
 # Telegram notification config
 TELEGRAM_ENV_FILE="$HOME/.claude/channels/telegram/.env"
