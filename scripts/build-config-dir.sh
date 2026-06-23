@@ -42,7 +42,15 @@ while IFS= read -r entry; do
   linked=$((linked + 1))
 done < <(ls -1A "$SRC")
 
-echo "config dir mirror ready: $DST ($linked entries linked, .credentials.json excluded)"
+# The HOME-level ~/.claude.json holds onboarding/theme/project-trust/MCP state. A fresh
+# CLAUDE_CONFIG_DIR otherwise triggers the first-run wizard (theme prompt) which blocks the
+# unattended bot at startup. It contains NO refreshable credential (verified: only account
+# metadata under oauthAccount, no access/refresh tokens), so symlink it — the bot shares
+# onboarding/trust state with ~/.claude while only .credentials.json stays isolated.
+if [ -e "$DST/.claude.json" ] || [ -L "$DST/.claude.json" ]; then rm -f "$DST/.claude.json"; fi
+ln -s "$HOME/.claude.json" "$DST/.claude.json"
+
+echo "config dir mirror ready: $DST ($linked entries linked + .claude.json, .credentials.json excluded)"
 if [ -e "$DST/.credentials.json" ]; then
   echo "ERROR: .credentials.json present in $DST — fix before starting the bot" >&2
   exit 1
