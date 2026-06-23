@@ -32,7 +32,13 @@ AUTH_FAIL_COOLDOWN=240   # seconds (4 min) — upstream 401 windows are short (2
                          # longer than the outage itself (2026-06-23 06:05 event). 4 min lands
                          # the retry after the window typically closes. STOP-after-N below
                          # still prevents a true storm.
-AUTH_FAIL_THRESHOLD=3    # auth-loop restarts before we STOP restarting and just alert
+AUTH_FAIL_THRESHOLD=3    # auth-loop restarts at the short cooldown before widening
+AUTH_FAIL_COOLDOWN_MAX=900  # after THRESHOLD auth restarts, widen to 15-min spacing but
+                            # KEEP retrying (never fully stop). A silent startup-401 zombie
+                            # parks at the prompt and never exits, so pm2/start.sh can't
+                            # retry it — only the watchdog can. Upstream 401 windows clear
+                            # on their own (seen ~20 min 2026-06-23 14:13) and the next wide
+                            # clean_restart catches the recovery; alert once meanwhile.
 
 # Telegram notification config
 TELEGRAM_ENV_FILE="$HOME/.claude/channels/telegram/.env"
@@ -106,6 +112,17 @@ auth_failure_recent() {
     | grep -qE '401 Invalid authentication|Please run /login'
 }
 
+# 401 present in the recent log tail, WITHOUT the mtime guard. Used only to CLASSIFY an
+# already-detected breakage (stale heartbeat) as auth-related. A startup-401 zombie parks
+# SILENTLY at the prompt — the log stops updating, so auth_failure_recent()'s mtime guard
+# misses it and the watchdog would otherwise treat it as an ordinary REPL hang (slow path,
+# no alert). This is the 2026-06-23 14:13 outage: 20 min of silent looping.
+auth_in_log() {
+  [ -f "$BOT_OUT_LOG" ] || return 1
+  tail -c 20000 "$BOT_OUT_LOG" 2>/dev/null \
+    | grep -qE '401 Invalid authentication|Please run /login'
+}
+
 read_counter() {
   if [ -f "$COUNTER_FILE" ]; then
     cat "$COUNTER_FILE"
@@ -162,10 +179,17 @@ do_restart() {
   local reason="$1"
   local is_auth="${2:-0}"   # 1 = auth-failure loop (wide spacing, stop hammering early)
 
+  local counter
+  counter=$(read_counter)
+
   # Per-severity cooldown: auth loops get a much wider window since rapid restarts
-  # don't fix a 401 and only sustain it.
+  # don't fix a 401 and only sustain it; once past the threshold widen further still.
   local cd
-  if [ "$is_auth" = "1" ]; then cd="$AUTH_FAIL_COOLDOWN"; else cd="$(current_cooldown)"; fi
+  if [ "$is_auth" = "1" ]; then
+    if [ "$counter" -ge "$AUTH_FAIL_THRESHOLD" ]; then cd="$AUTH_FAIL_COOLDOWN_MAX"; else cd="$AUTH_FAIL_COOLDOWN"; fi
+  else
+    cd="$(current_cooldown)"
+  fi
   if [ -f "$LAST_RESTART_FILE" ]; then
     local last now
     last=$(cat "$LAST_RESTART_FILE"); now=$(date +%s)
@@ -176,19 +200,20 @@ do_restart() {
     fi
   fi
 
-  local counter
-  counter=$(read_counter)
-
-  # Auth loop past threshold: STOP restarting (futile) — alert once, then sit quiet.
-  # pm2 + start.sh keep spaced-retrying in the background; a transient clears on its
-  # own and reset_counter_on_recovery() lifts this state when the heartbeat returns.
+  # Auth loop past threshold: stop HAMMERING but keep WIDE-interval clean restarts. A
+  # silent startup-401 zombie parks at the prompt and never exits, so pm2/start.sh will
+  # NOT retry it — only the watchdog can. Upstream 401 windows clear on their own (seen
+  # ~20 min on 2026-06-23) and the next wide clean_restart catches the recovery. The
+  # top-of-function cooldown already enforced AUTH_FAIL_COOLDOWN_MAX spacing to get here.
+  # Alert once so the admin can regen the token if it's truly persistent.
   if [ "$is_auth" = "1" ] && [ "$counter" -ge "$AUTH_FAIL_THRESHOLD" ]; then
     if [ ! -f "$ESCALATED_FILE" ]; then
       touch "$ESCALATED_FILE"
-      notify_admin "🚨 Watchdog: бот у циклі 401 / «Please run /login» ($counter спроб). Рестарти не лікують 401 — припиняю штурм. Перевір токен ~/.claude/.klavdiy-oauth-token (онови через 'claude setup-token') та 'pm2 logs telegram-klavdiy'. Якщо транзієнт — мине саме; ручний фікс: stop watchdog+бот, kill orphans, один чистий рестарт."
-    else
-      log "auth-loop persists ($counter) — staying in backoff, NOT restarting. $reason"
+      notify_admin "🚨 Watchdog: бот у циклі 401 / «Please run /login» ($counter спроб). Рестарти не лікують 401 миттєво — переходжу на рідкі чисті рестарти (кожні ${AUTH_FAIL_COOLDOWN_MAX}s). Зазвичай транзієнт минає сам. Якщо тримається — онови токен: 'claude setup-token' > ~/.claude/.klavdiy-oauth-token."
     fi
+    log "auth-loop past threshold ($counter) — wide-interval clean restart (${AUTH_FAIL_COOLDOWN_MAX}s). $reason"
+    date +%s > "$LAST_RESTART_FILE"
+    clean_restart
     return
   fi
 
@@ -282,7 +307,15 @@ print(procs[0]['pm2_env']['status'] if procs else 'missing')
     now_repl=$(date +%s)
     repl_age=$(( now_repl - repl_mtime ))
     if [ "$repl_age" -gt "$REPL_HB_MAX_AGE" ]; then
-      do_restart "REPL heartbeat stale (${repl_age}s, max ${REPL_HB_MAX_AGE}s) — REPL hung, MCP alive"
+      # A startup-401 zombie parks silently at the prompt: heartbeat goes stale but the
+      # log stops updating, so auth_failure_recent() (step 2.5) misses it. Classify by
+      # 401-in-log here so it routes through the auth path (wide spacing, loud alert)
+      # rather than the ordinary hang path (2026-06-23 14:13 silent 20-min loop).
+      if auth_in_log; then
+        do_restart "REPL heartbeat stale (${repl_age}s) + 401 in bot log — silent startup-401 zombie" 1
+      else
+        do_restart "REPL heartbeat stale (${repl_age}s, max ${REPL_HB_MAX_AGE}s) — REPL hung, MCP alive"
+      fi
       continue
     fi
   fi
