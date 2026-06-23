@@ -26,6 +26,18 @@ if [ -r "$HOME/.claude/.klavdiy-oauth-token" ]; then
   export CLAUDE_CODE_OAUTH_TOKEN="$(tr -d '[:space:]' < "$HOME/.claude/.klavdiy-oauth-token")"
 fi
 
+# Isolated config dir — THE fix for the recurring ~8h 401 (root cause found 2026-06-23).
+# The default ~/.claude/.credentials.json holds a refreshable /login subscription cred
+# (8h access token + refresh token). Claude Code 2.1.x has a regression (gh #68241/#70124)
+# where that on-disk file OVERRIDES CLAUDE_CODE_OAUTH_TOKEN from env — so despite exporting
+# our static 1-yr setup-token above, the bot actually ran on the 8h cred and 401'd every
+# ~8h when its refresh failed in the daemon context (locked Keychain + concurrent claude
+# processes racing the single-use refresh token + transient 5xx). ~/.claude-klavdiy is a
+# symlink mirror of ~/.claude with EVERYTHING except .credentials.json, so the bot sees the
+# telegram plugin + channel config but NO refreshable cred → uses the static token (no
+# expiry, no refresh, no Keychain). Rebuild the mirror: ./scripts/build-config-dir.sh
+export CLAUDE_CONFIG_DIR="$HOME/.claude-klavdiy"
+
 # Build PATH dynamically — add common tool locations if they exist
 for dir in "$HOME/.local/bin" "$HOME/.bun/bin" "$HOME/.nvm/versions/node/"*/bin /opt/homebrew/bin /usr/local/bin; do
   [ -d "$dir" ] && PATH="$dir:$PATH"
