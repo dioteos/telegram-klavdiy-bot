@@ -93,7 +93,23 @@ You are a headless one-shot news-digest-publish runner. Do exactly this:
       json.dump({'blocks': blocks, 'order': order, 'footer': "Є відгуки чи пропозиції\\\\? Пишіть у коментарях 👇"}, open('/tmp/digest_payload.json','w'), ensure_ascii=False)
       PYEOF
    g. **Publish each category to TARGET_CHAT_ID via curl** (parse_mode=MarkdownV2, disable_web_page_preview=true). Capture message_id from response. Iterate the `order` array in /tmp/digest_payload.json (ukraine→geo→eco→tech→other→regional) — `order` already excludes regional when it has no worthwhile items, so just send every key it lists. Then post the footer the same way.
-      Pseudo: `BLOCK=$(jq -r '.blocks.ukraine' /tmp/digest_payload.json); HTTP_STATUS=$(curl -s --connect-timeout 10 --max-time 30 -o /tmp/tg_resp.json -w "%{http_code}" -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" --data-urlencode "chat_id=$TARGET_CHAT_ID" -d "parse_mode=MarkdownV2" -d "disable_web_page_preview=true" --data-urlencode "text=$BLOCK")`
+      **ITERATION — zsh-safe (HARD RULE, 2026-07-06 incident):** the Bash tool runs under **zsh**, which does NOT word-split an unquoted `$var`. Do NOT loop with `for k in $ORDER` — under zsh that yields ONE iteration with the whole string, and `jq -r --arg k "$whole_string" '.blocks[$k]'` returns literal `null` → a "null" message gets posted to the channel (exactly what happened 2026-07-06, stray msg 607, had to be self-deleted). ALWAYS drive the loop from jq itself and fetch each block by key:
+      ```
+      jq -r '.order[]' /tmp/digest_payload.json | while IFS= read -r key; do
+        BLOCK=$(jq -r --arg k "$key" '.blocks[$k] // ""' /tmp/digest_payload.json)
+        # ... PRE-SEND GUARD (below), then curl ...
+      done
+      ```
+      Pseudo (single category): `BLOCK=$(jq -r --arg k "$key" '.blocks[$k] // ""' /tmp/digest_payload.json); HTTP_STATUS=$(curl -s --connect-timeout 10 --max-time 30 -o /tmp/tg_resp.json -w "%{http_code}" -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" --data-urlencode "chat_id=$TARGET_CHAT_ID" -d "parse_mode=MarkdownV2" -d "disable_web_page_preview=true" --data-urlencode "text=$BLOCK")`
+      **PRE-SEND GUARD (HARD RULE — never post a junk message):** immediately BEFORE every sendMessage curl (categories AND footer), validate the exact text you are about to send. Refuse to POST if the payload is empty, whitespace-only, or the literal string `null`/`undefined`. This is the last line of defense against the zsh/jq class of bug — even if key lookup misfires, a bad payload must NEVER reach Telegram:
+      ```
+      if [ -z "${BLOCK// /}" ] || [ "$BLOCK" = "null" ] || [ "$BLOCK" = "undefined" ]; then
+        echo "GUARD-SKIP category=$key reason=empty-or-null-payload"   # do NOT curl
+        # record message_id=null for this category, append to warnings, continue
+        continue
+      fi
+      ```
+      Same guard for the footer: if the footer text resolves to empty/`null`, skip the footer send and warn — never post a bare "null" or blank footer.
       Then read `/tmp/tg_resp.json` for `.ok` and `.result.message_id`.
       **FOOTER ORDERING (HARD RULE):** the footer is sent EXACTLY ONCE, and ONLY after the category loop has fully finished and every published category has a recorded message_id. NEVER send the footer before or between categories, NEVER as a standalone / test / preview message, and NEVER more than once. A premature lone footer leaves an orphan message in the channel that the admin must delete by hand — 2026-06-11 incident: a footer went out before the categories as message 433 and Anton had to remove it. If you somehow emit a stray message to the channel before the digest is complete, do NOT try to "fix" it by re-sending — record it in the `warnings` list and flag it in the admin DM (step j); the admin decides.
       **NO RETRY — EVER (categories OR footer).**
