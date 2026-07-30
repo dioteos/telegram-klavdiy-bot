@@ -27,6 +27,27 @@ for dir in "$HOME/.local/bin" "$HOME/.bun/bin" "$HOME/.nvm/versions/node/"*/bin 
 done
 export PATH
 
+# Strip inherited Claude Code session env. If any CLAUDE_CODE_SESSION_* vars leak
+# in (launchd sidecar bootstrapped from inside a Claude session, or a polluted
+# gui-domain env), the spawned `claude -p` thinks it is a CHILD session and
+# authenticates via the short-lived CLAUDE_CODE_SESSION_ACCESS_TOKEN — which goes
+# stale within hours. Mirrors news-collect-headless.sh / news-digest-headless.sh.
+# Note: does NOT touch TELEGRAM_BOT_TOKEN — that is sourced from channels/telegram/.env below.
+unset CLAUDE_CODE_SESSION_ACCESS_TOKEN CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_SESSION_ID \
+      CLAUDECODE CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_EXECPATH AI_AGENT CLAUDE_EFFORT \
+      CLAUDE_CODE_SSE_PORT ANTHROPIC_API_KEY 2>/dev/null || true
+
+# Load long-lived OAuth token. Stripping the session env above is NOT enough: under
+# launchd (non-GUI) the macOS Keychain is unreadable, so credentials.json OAuth refresh
+# 401s. CLAUDE_CODE_OAUTH_TOKEN has higher precedence and needs no GUI session.
+# Without this every fallback 401s — root cause of the 2026-07-27 00:28 double miss
+# (msgs 3549/3551 unanswered: "OAuth access token has expired"). See
+# memory/project_headless_oauth_token.md — EVERY wrapper that spawns `claude -p`
+# needs this block; this one was missed when the news wrappers were fixed 2026-06-20.
+if [ -r "$HOME/.claude/.klavdiy-oauth-token" ]; then
+  export CLAUDE_CODE_OAUTH_TOKEN="$(tr -d '[:space:]' < "$HOME/.claude/.klavdiy-oauth-token")"
+fi
+
 if ! command -v claude >/dev/null 2>&1; then
   echo "$(date -Iseconds) ERROR: claude not in PATH ($PATH)" | tee -a "$LOG_FILE" >&2
   exit 3
