@@ -37,7 +37,7 @@ After all tasks registered, call `CronList` and compare count to the number of e
 ## Telemetry on every fire
 
 Every task's first action (before the real work) is:
-1. `touch ./heartbeat`
+1. `touch ./repl-heartbeat` — NEVER `./heartbeat`. Tasks registered here run in the REPL, and `./heartbeat` is owned by the launchd agent `com.dioteos.klavdiy.heartbeat`. A REPL touch there defeats the 2026-05-23 heartbeat decoupling (see CLAUDE.md → Heartbeat, `memory/project_heartbeat_decoupling.md`).
 2. Update `./state.json.last_fire["{task_name}"] = "<ISO8601 now with timezone>"` (use `date -Iseconds` or equivalent).
 
 This gives us a timestamp per task. Without it we can't tell "cron never fired" from "task crashed mid-way".

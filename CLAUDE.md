@@ -144,7 +144,7 @@ Fill in placeholders with actual values from this session's startup.
 If no enabled tasks, confirm bot is online.
 Do NOT add a stale-memory warning based on `updated` age alone — see `memory/feedback_memory_not_stale_by_date.md`. Behavioral/config memory stays correct for years; the daytime health-check (10:00) handles memory audits with content judgment.
 
-**Quiet hours (00:00–08:00 local):** skip the routine startup summary. Log it locally and touch `heartbeat` and `repl-heartbeat`. DM the admin ONLY for fresh breakage detected this session (patch drift this startup, task count mismatch, restart_note with non-routine content, new pipeline failure). Do NOT DM about chronic conditions that existed at the previous startup — stale-looking memory dates, same disabled tasks, same plugin version still patched. See `memory/feedback_quiet_hours_strict.md` and `memory/feedback_memory_not_stale_by_date.md`. Boring "online, N/N tasks registered" messages wake the admin at 2am for nothing.
+**Quiet hours (00:00–08:00 local):** skip the routine startup summary. Log it locally and touch `./repl-heartbeat` (NEVER `./heartbeat` — that one is launchd-owned, see the Heartbeat section). DM the admin ONLY for fresh breakage detected this session (patch drift this startup, task count mismatch, restart_note with non-routine content, new pipeline failure). Do NOT DM about chronic conditions that existed at the previous startup — stale-looking memory dates, same disabled tasks, same plugin version still patched. See `memory/feedback_quiet_hours_strict.md` and `memory/feedback_memory_not_stale_by_date.md`. Boring "online, N/N tasks registered" messages wake the admin at 2am for nothing.
 
 ### 6. Restart continuity
 
