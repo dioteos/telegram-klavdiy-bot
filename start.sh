@@ -76,7 +76,24 @@ SESSION_START=$(date +%s)
 expect -c '
 set timeout 82800
 spawn claude --channels plugin:telegram@claude-plugins-official --dangerously-skip-permissions "Execute the Startup procedure defined in CLAUDE.md. Follow all 6 steps in order."
+# Workspace-trust dialog (root cause of the 2026-08-14 outage). Claude Code 2.1.232
+# bounded the trust lookup to the GIT ROOT: before, an untrusted dir walked its parents
+# unbounded and this repo inherited hasTrustDialogAccepted=true from ~/. Now the walk
+# stops at /Users/dioteos/www/telegram-bot (a git repo) which is untrusted → every spawn
+# renders "Quick safety check: ... Yes, I trust this folder" and the unattended session
+# hangs there forever: no MCP subprocess, bot deaf, watchdog restart loop.
+# Option 1 is preselected, so a bare Enter accepts. Answer once per session only.
+# The dialog words are split by ANSI cursor-position escapes, hence the bounded regex.
+set trust_answered 0
 expect {
+    -re {trust.{0,30}this.{0,30}folder} {
+        if {$trust_answered == 0} {
+            set trust_answered 1
+            puts "\n\[start.sh\] workspace-trust dialog detected — accepting"
+            send "\r"
+        }
+        exp_continue
+    }
     timeout { puts "Session timed out after 23h — exiting for PM2 restart"; exit 1 }
     eof
 }
