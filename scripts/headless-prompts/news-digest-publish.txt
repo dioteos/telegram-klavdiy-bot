@@ -8,7 +8,10 @@ You are a headless one-shot news-digest-publish runner. Do exactly this:
    - Tools available: Read, Write, Edit, Bash, WebSearch. No TaskCreate, no CronCreate, no MCP.
 4. Concrete steps:
    a. Read __BOT_DIR__/news/collect-__DATE__.json. If MISSING entirely → run emergency-collect (5 WebSearches), then proceed. Log this in admin notify.
-   b. **Safety-net catchup (LAST RESCUE)**: for each of the 5 CORE categories (ukraine/geopolitics/economy/tech/other) with items length <3 — ONE WebSearch with broader query, dedup against last 3 days, append. After this step, every CORE category MUST have ≥3 items. If any CORE category still has 0 items after catchup, publish that category with a "⚠️ Сьогодні знайти новини в цій категорії не вдалося." placeholder block — do NOT skip a core category.
+   b. **Safety-net catchup (LAST RESCUE)**: for each of the 5 CORE categories (ukraine/geopolitics/economy/tech/other) with items length <3 — ONE WebSearch with broader query, dedup against last 3 days, append.
+      - **NEVER PAD (HARD RULE, Anton 2026-08-03: «Якщо новин немає — не потрібно додавати неважливі. Поважаймо читачів»).** 3 items is a TARGET, not a quota. Add an item from catchup ONLY if it is genuinely worthwhile on its own merit. Filler test before adding any item that would lift a block to 3: "would I include this if the block already had 5 others?" If no — do NOT add it. A short honest block beats a padded one; a weak item costs reader trust instead of adding value. Same principle as the regional rule below and as the editor-pass "філер гірший за недобір".
+      - A CORE category may therefore publish with 1-2 items. That is a correct outcome, not a failure — state the real count and reason in the admin notify ("⚠️ Блок {cat}: {N} новин, вартіснішого сьогодні нема"), and never invent, stretch, or resurrect dedup-dropped material to reach 3.
+      - Only if a CORE category has literally 0 items after catchup: publish the "⚠️ Сьогодні знайти новини в цій категорії не вдалося." placeholder block rather than skipping the category.
       - **economy + other Ukrainian angle (SOFT):** if economy or other has NO Ukrainian-origin item but a worthwhile one exists today, spend up to 1 extra WebSearch each (`"економіка України {DATE_UK}"` / `"Україна {DATE_UK} суспільство|культура|наука"`) and add it. Soft rule — add only when genuinely worthwhile, never pad. This implements Anton's 2026-06-10 request that Ukrainian content always be sought in these two blocks.
       - **regional (6th category, BEST-EFFORT — added 2026-06-10):** NEVER force-fill and NEVER placeholder. If collect has worthwhile regional items, publish 3-4 of them. If it has 1-2 worthwhile, publish those. If it has 0 worthwhile items, OMIT the regional section entirely (no block sent). Optionally spend up to 1 WebSearch (`"новини Вінниця {DATE_UK}"` / `"регіональні новини України {DATE_UK}"`) to find a worthwhile local item — but only add if worthwhile.
    c. **Freshness filter (HARD RULE — applies to the 5 CORE categories):** for each core category, sort items by event_date (today → today-1 → today-2 → null). Select up to 7 final items: all today (up to 7), then up to 2 today-1, max 1 today-2 as exception. Drop items with event_date <= today-2 if more than 1, drop items with null event_date entirely (these are bugs from collect — flag in admin notify).
@@ -68,7 +71,10 @@ You are a headless one-shot news-digest-publish runner. Do exactly this:
       def md(s):
           return ''.join('\\\\' + c if c in SPECIAL else c for c in s)
       def lc_ru(s):
-          for p,r in [(r'\\bРосія\\b','росія'),(r'\\bРосії\\b','росії'),(r'\\bРосію\\b','росію'),(r'\\bРосією\\b','росією'),(r'\\bРосіян\\b','росіян'),(r'\\bРосіяни\\b','росіяни'),(r'\\bРФ\\b','рф'),(r'\\bРосійськ','російськ')]:
+          # prefix-anchored: covers every declension without enumerating each case form.
+          # 2026-08-18: added Москв*/Кремл*/Підмосков* — msg 928 published "Прилетіло і в Москву" because
+          # the old exact-form list had no москва patterns at all. Also generalized Росі* the same way.
+          for p,r in [(r'\\bРосі','росі'),(r'\\bРосійськ','російськ'),(r'\\bРФ\\b','рф'),(r'\\bМоскв','москв'),(r'\\bМосковськ','московськ'),(r'\\bПідмосков','підмосков'),(r'\\bКремл','кремл'),(r'\\bРосарм','росарм')]:
               s = re.sub(p, r, s)
           return s
       # (key, emoji, name, max_items). regional is LAST and best-effort (max 4, omitted if empty).
