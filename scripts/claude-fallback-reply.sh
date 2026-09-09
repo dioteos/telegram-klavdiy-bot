@@ -10,6 +10,9 @@ set -euo pipefail
 
 MSGID="${1:?usage: $0 <message_id>}"
 BOT_DIR="/Users/dioteos/www/telegram-bot"
+# Model for fallback replies (2026-09-09): Sonnet — short one-shot admin replies.
+# Override per run: FALLBACK_MODEL=claude-opus-5 scripts/claude-fallback-reply.sh <msg_id>
+FALLBACK_MODEL="${FALLBACK_MODEL:-claude-sonnet-5}"
 DATE="$(date +%Y-%m-%d)"
 LOG_FILE="$BOT_DIR/logs/fallback-$MSGID-$DATE.log"
 INBOX_FILE="$BOT_DIR/inbox/$MSGID.json"
@@ -109,6 +112,7 @@ done
 EXIT_CODE=0
 cd /tmp
 claude -p "$PROMPT" \
+  --model "$FALLBACK_MODEL" \
   --strict-mcp-config --mcp-config '{"mcpServers":{}}' \
   --add-dir "$BOT_DIR" \
   --dangerously-skip-permissions \

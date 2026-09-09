@@ -19,6 +19,9 @@ case "$SLOT" in
 esac
 
 BOT_DIR="/Users/dioteos/www/telegram-bot"
+# Model for headless collect (2026-09-09): Sonnet — search+categorise, no deep reasoning needed.
+# Override per run: NEWS_MODEL=claude-opus-5 scripts/news-collect-headless.sh morning
+NEWS_MODEL="${NEWS_MODEL:-claude-sonnet-5}"
 DATE="$(date +%Y-%m-%d)"
 LOG_FILE="$BOT_DIR/logs/headless-$SLOT-$DATE.log"
 TASK_FILE="$BOT_DIR/tasks/news-collect-$SLOT.md"
@@ -121,6 +124,7 @@ for attempt in $(seq 1 $MAX_ATTEMPTS); do
   fi
 
   claude -p "$PROMPT" \
+    --model "$NEWS_MODEL" \
     --strict-mcp-config --mcp-config '{"mcpServers":{}}' \
     --add-dir "$BOT_DIR" \
     --dangerously-skip-permissions \
