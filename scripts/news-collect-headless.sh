@@ -19,9 +19,9 @@ case "$SLOT" in
 esac
 
 BOT_DIR="/Users/dioteos/www/telegram-bot"
-# Model for headless collect (2026-09-09): Sonnet — search+categorise, no deep reasoning needed.
-# Override per run: NEWS_MODEL=claude-opus-5 scripts/news-collect-headless.sh morning
-NEWS_MODEL="${NEWS_MODEL:-claude-sonnet-5}"
+# Model for headless collect (2026-09-09): Opus — Sonnet A/B (same slot, same prompt) gave 3 thin items vs 8 well-sourced ones.
+# Override per run: NEWS_MODEL=claude-sonnet-5 scripts/news-collect-headless.sh morning
+NEWS_MODEL="${NEWS_MODEL:-claude-opus-5}"
 DATE="$(date +%Y-%m-%d)"
 LOG_FILE="$BOT_DIR/logs/headless-$SLOT-$DATE.log"
 TASK_FILE="$BOT_DIR/tasks/news-collect-$SLOT.md"
